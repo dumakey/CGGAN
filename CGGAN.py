@@ -24,20 +24,11 @@ class CGenTrainer:
 
     def __init__(self, launch_file):
 
-        class parameter_container:
-            pass
-        class dataset_container:
-            pass
-        class model_container:
-            pass
-        class predictions_container:
-            pass
-
-        self.parameters = parameter_container()
-        self.datasets = dataset_container()
-        self.datasets.iterators = dataset_container()
-        self.model = model_container()
-        self.predictions = predictions_container()
+        self.parameters = self.create_container()
+        self.datasets = self.create_container()
+        self.datasets.iterators = self.create_container()
+        self.model = self.create_container()
+        self.predictions = self.create_container()
 
         # Setup general parameters
         casedata = reader.read_case_setup(launch_file)
@@ -69,6 +60,12 @@ class CGenTrainer:
 
         return '{}, a class to generate contours based on Generative Adversarial Neural Networks (GANNs)'.format(class_name)
 
+    def create_container(self):
+
+        class container:
+            pass
+
+        return container
     def launch_analysis(self):
 
         analysis_ID = self.parameters.analysis['type']
@@ -260,24 +257,20 @@ class CGenTrainer:
         epoch_iter = self.parameters.training_parameters['epoch_iter']
         num_iter = nepoch * epoch_iter
         batch_size = self.parameters.training_parameters['batch_size']
-        batch_shape = (batch_size,image_shape[0],image_shape[1],image_shape[2])
+        batch_shape = (batch_size,image_shape[1],image_shape[0],1)
         l2_reg = self.parameters.training_parameters['l2_reg']
         l1_reg = self.parameters.training_parameters['l1_reg']
         dropout = self.parameters.training_parameters['dropout']
         activation = self.parameters.training_parameters['activation']
 
         # Create model containers
-        self.model.Model = []
-        self.model.History = []
-
-        # Models and functions declaration
-        discriminator = models.discriminator
-        generator = models.generator
-        disc_optimizer = models.optimizer(alpha)
-        gen_optimizer = models.optimizer(alpha)
-        loss = models.loss_function()
-        metric_disc = models.performance_metric
-        metric_gen = models.performance_metric
+        if sens_var != None:
+            self.model.Model = []
+            history = self.create_container()
+            self.model.History = []
+        else:
+            self.model.Model = self.create_container()
+            self.model.History = self.create_container()
 
         # Training variables
         self.model.History.disc_loss_train = np.zeros([nepoch,])
@@ -290,6 +283,15 @@ class CGenTrainer:
         self.model.History.gen_loss_cv = np.zeros([nepoch,])
         self.model.History.gen_metric_cv = np.zeros([nepoch,])
 
+        # Models and functions declaration
+        discriminator = models.Discriminator(activation,l2_reg,l1_reg,dropout)
+        generator = models.Generator(activation,l2_reg,l1_reg,dropout)
+        disc_optimizer = models.optimizer(alpha)
+        gen_optimizer = models.optimizer(alpha)
+        loss = models.loss_function()
+        metric_disc = models.performance_metric
+        metric_gen = models.performance_metric
+
         epoch = 1
         disc_streaming_loss = 0
         disc_streaming_loss_cv = 0
@@ -301,34 +303,38 @@ class CGenTrainer:
         gen_streaming_metric_cv = 0
         for i in range(1,num_iter + 1):
             ### Update discriminator
-            real_image_batch = tf.reshape(self.datasets.iterators.train_iterator.get_next(),batch_shape)
-            noise_batch = tf.random.normal((batch_size,noise_dim))
-            fake_image_batch = generator(noise_batch,activation,l2_reg,l1_reg,dropout)
-            # Prediction computations
-            fake_logit_batch = discriminator(fake_image_batch,activation,l2_reg,l1_reg,dropout)
-            real_logit_batch = discriminator(real_image_batch,activation,l2_reg,l1_reg,dropout)
-            # Ground truth labels
-            fake_label_batch = tf.zeros((batch_size,1))
-            real_label_batch = tf.ones((batch_size,1))
-            # Loss computation
-            fake_loss_batch = loss(fake_logit_batch,fake_label_batch)
-            real_loss_batch = loss(real_logit_batch,real_label_batch)
-            disc_loss_batch = 0.5 * (fake_loss_batch + real_loss_batch)
-            # Metric computation
-            fake_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
-            real_metric_batch = metric_disc(real_logit_batch,real_label_batch).numpy()
-            disc_metric_batch = 0.5 * (fake_metric_batch + real_metric_batch)
+            with tf.GradientTape() as tape_disc:
+                real_image_batch = tf.reshape(self.datasets.iterators.train_iterator.get_next(),batch_shape)
+                noise_batch = tf.random.normal((batch_size,noise_dim))
+                fake_image_batch = generator(noise_batch)
+                # Prediction computations
+                fake_logit_batch = discriminator(fake_image_batch)
+                real_logit_batch = discriminator(real_image_batch)
+                # Ground truth labels
+                fake_label_batch = tf.zeros((batch_size,1))
+                real_label_batch = tf.ones((batch_size,1))
+                # Loss computation
+                fake_loss_batch = loss(fake_logit_batch,fake_label_batch)
+                real_loss_batch = loss(real_logit_batch,real_label_batch)
+                disc_loss_batch = 0.5 * (fake_loss_batch + real_loss_batch)
+                # Metric computation
+                fake_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
+                real_metric_batch = metric_disc(real_logit_batch,real_label_batch).numpy()
+                disc_metric_batch = 0.5 * (fake_metric_batch + real_metric_batch)
             # Weights update
-            disc_optimizer.minimize(disc_loss_batch,var_list=disc_optimizer.weights,tape=tf.GradientTape())
+            disc_gradients = tape_disc.gradient(disc_loss_batch,discriminator.trainable_variables)
+            disc_optimizer.apply_gradients(zip(disc_gradients,discriminator.trainable_variables))
 
-            # Update generator
-            noise_batch = tf.random.normal(batch_size,noise_dim)
-            fake_image_batch = generator(noise_batch,activation,l2_reg,l1_reg,dropout)
-            fake_logit_batch = discriminator(fake_image_batch,activation,l2_reg,l1_reg,dropout)
-            fake_label_batch = tf.ones((batch_size,1))
-            gen_loss_batch = loss(fake_logit_batch,fake_label_batch)
-            gen_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
-            gen_optimizer.minimize(gen_loss_batch,var_list=gen_optimizer.weights,tape=tf.GradientTape())
+            ### Update generator
+            with tf.GradientTape() as tape_gen:
+                noise_batch = tf.random.normal((batch_size,noise_dim))
+                fake_image_batch = generator(noise_batch)
+                fake_logit_batch = discriminator(fake_image_batch)
+                fake_label_batch = tf.ones((batch_size,1))
+                gen_loss_batch = loss(fake_logit_batch,fake_label_batch)
+                gen_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
+            gen_gradients = tape_gen.gradient(gen_loss_batch,generator.trainable_variables)
+            gen_optimizer.apply_gradients(zip(gen_gradients,generator.trainable_variables))
 
             disc_streaming_loss += disc_loss_batch
             disc_streaming_metric += disc_metric_batch
@@ -407,7 +413,6 @@ class CGenTrainer:
                 gen_streaming_metric = 0
                 gen_streaming_metric_cv = 0
                 epoch += 1
-
 
     def generate_samples(self, parameters):
 
