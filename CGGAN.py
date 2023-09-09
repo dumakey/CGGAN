@@ -110,13 +110,11 @@ class CGenTrainer:
         self.datasets.data_train, self.datasets.data_cv, self.datasets.data_test = \
         dataset_processing.get_datasets(case_dir,training_size,img_size)
 
-        dataset_train, train_iterator, dataset_cv, cv_iterator,dataset_test = dataset_processing.get_tensorflow_datasets(self.datasets.data_train,self.datasets.data_cv,
+        dataset_train, dataset_cv, dataset_test = dataset_processing.get_tensorflow_datasets(self.datasets.data_train,self.datasets.data_cv,
                                                                                 self.datasets.data_test,batch_size)
         self.datasets.dataset_train = dataset_train
         self.datasets.dataset_cv = dataset_cv
         self.datasets.dataset_test = dataset_test
-        self.datasets.iterators.train_iterator = train_iterator
-        self.datasets.iterators.cv_iterator = cv_iterator
 
         if self.model.imported == False:
             self.train_model()
@@ -292,7 +290,7 @@ class CGenTrainer:
         metric_disc = models.performance_metric
         metric_gen = models.performance_metric
 
-        epoch = 1
+        epoch = 0
         disc_streaming_loss = 0
         disc_streaming_loss_cv = 0
         disc_streaming_metric = 0
@@ -301,10 +299,13 @@ class CGenTrainer:
         gen_streaming_loss_cv = 0
         gen_streaming_metric = 0
         gen_streaming_metric_cv = 0
+
+        # Create iterator
+        train_iterator = iter(self.datasets.dataset_train)
         for i in range(1,num_iter + 1):
             ### Update discriminator
             with tf.GradientTape() as tape_disc:
-                real_image_batch = tf.reshape(self.datasets.iterators.train_iterator.get_next(),batch_shape)
+                real_image_batch = tf.reshape(train_iterator.get_next(),batch_shape)
                 noise_batch = tf.random.normal((batch_size,noise_dim))
                 fake_image_batch = generator(noise_batch)
                 # Prediction computations
@@ -316,14 +317,14 @@ class CGenTrainer:
                 # Loss computation
                 fake_loss_batch = loss(fake_logit_batch,fake_label_batch)
                 real_loss_batch = loss(real_logit_batch,real_label_batch)
-                disc_loss_batch = 0.5 * (fake_loss_batch + real_loss_batch)
+                disc_loss_batch = 0.5 * (fake_loss_batch + real_loss_batch) + sum(discriminator.losses)
                 # Metric computation
                 fake_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
                 real_metric_batch = metric_disc(real_logit_batch,real_label_batch).numpy()
                 disc_metric_batch = 0.5 * (fake_metric_batch + real_metric_batch)
             # Weights update
-            disc_gradients = tape_disc.gradient(disc_loss_batch,discriminator.trainable_variables)
-            disc_optimizer.apply_gradients(zip(disc_gradients,discriminator.trainable_variables))
+            disc_gradients = tape_disc.gradient(disc_loss_batch,discriminator.trainable_weights)
+            disc_optimizer.apply_gradients(zip(disc_gradients,discriminator.trainable_weights))
 
             ### Update generator
             with tf.GradientTape() as tape_gen:
@@ -331,7 +332,7 @@ class CGenTrainer:
                 fake_image_batch = generator(noise_batch)
                 fake_logit_batch = discriminator(fake_image_batch)
                 fake_label_batch = tf.ones((batch_size,1))
-                gen_loss_batch = loss(fake_logit_batch,fake_label_batch)
+                gen_loss_batch = loss(fake_logit_batch,fake_label_batch) + sum(generator.losses)
                 gen_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
             gen_gradients = tape_gen.gradient(gen_loss_batch,generator.trainable_variables)
             gen_optimizer.apply_gradients(zip(gen_gradients,generator.trainable_variables))
@@ -342,21 +343,28 @@ class CGenTrainer:
             gen_streaming_metric += gen_metric_batch
 
             if i % epoch_iter == 0:
+                # Cancel regularization terms for discriminator & generator
+                discriminator.set_up_CV_state()
+                generator.set_up_CV_state()
+
                 # Evaluate on training dataset
                 self.model.History.disc_loss_train[epoch] = disc_streaming_loss/epoch_iter
                 self.model.History.disc_metric_train[epoch] = disc_streaming_metric/epoch_iter
                 self.model.History.gen_loss_train[epoch] = gen_streaming_loss/epoch_iter
                 self.model.History.gen_metric_train[epoch] = gen_streaming_metric/epoch_iter
                 # Evaluate on cross-validation dataset
+                input_shape = (1,image_shape[1],image_shape[0],1)
+                niter = 0
+                cv_iterator = iter(self.datasets.dataset_cv) # create iterator for cross-validation dataset
                 while True:
                     try:
                         ## Evaluate discriminator
-                        real_image_cv = tf.reshape(self.datasets.iterators.cv_iterator.get_next(),1)
+                        real_image_cv = tf.reshape(cv_iterator.get_next(),input_shape)
                         noise_cv = tf.random.normal((1,noise_dim))
-                        fake_image_cv = generator(noise_cv,activation,l2_reg,l1_reg,dropout)
+                        fake_image_cv = generator(noise_cv)
                         # Prediction computations
-                        fake_logit_cv = discriminator(fake_image_cv,activation,l2_reg,l1_reg,dropout)
-                        real_logit_cv = discriminator(real_image_cv,activation,l2_reg,l1_reg,dropout)
+                        fake_logit_cv = discriminator(fake_image_cv)
+                        real_logit_cv = discriminator(real_image_cv)
                         # Ground truth labels
                         fake_label_cv = tf.zeros((1,1))
                         real_label_cv = tf.ones((1,1))
@@ -370,9 +378,9 @@ class CGenTrainer:
                         disc_metric_cv = 0.5 * (fake_metric_cv + real_metric_cv)
 
                         ## Evaluate generator
-                        noise_cv = tf.random.normal(1,noise_dim)
-                        fake_image_cv = generator(noise_cv,activation,l2_reg,l1_reg,dropout)
-                        fake_logit_cv = discriminator(fake_image_cv,activation,l2_reg,l1_reg,dropout)
+                        noise_cv = tf.random.normal((1,noise_dim))
+                        fake_image_cv = generator(noise_cv)
+                        fake_logit_cv = discriminator(fake_image_cv)
                         fake_label_cv = tf.ones((1,1))
                         gen_loss_cv = loss(fake_logit_cv,fake_label_cv)
                         gen_metric_cv = metric_disc(fake_logit_cv,fake_label_cv).numpy()
@@ -388,12 +396,14 @@ class CGenTrainer:
                         self.model.History.gen_loss_cv[epoch] = gen_streaming_loss_cv/niter
                         self.model.History.gen_metric_cv[epoch] = gen_streaming_metric_cv/niter
                         niter = 0
+                        discriminator.set_up_training_state()  # cancel regularization terms for discriminator
+                        generator.set_up_training_state()  # cancel regularization terms for generator
                         break
 
                 # Print results
                 print('Epoch {}, Discriminator loss (T,CV): ({:.2f},{:.2f}), Discriminator accuracy (T,CV): ({:.2f},{:.2f}) ||'
                       'Generator loss (T,CV): ({:.2f},{:.2f}), Generator accuracy (T,CV): ({:.2f},{:.2f})'
-                      .format(epoch,
+                      .format(epoch+1,
                               self.model.History.disc_loss_train[epoch],
                               self.model.History.disc_loss_cv[epoch],
                               self.model.History.disc_metric_train[epoch],
@@ -472,7 +482,8 @@ class CGenTrainer:
                 rmtree(results_folder)
             os.makedirs(results_folder)
 
-            Nepochs = self.parameters.training_parameters['epochs']
+            nepoch = self.parameters.training_parameters['epochs']
+            epochs = np.arange(1,nepoch+1,1)
             delimiter = ';'
             for j,h in enumerate(History):
                 disc_loss_train = h.disc_loss_train
@@ -486,54 +497,60 @@ class CGenTrainer:
 
                 ## LOGS ##
                 # Export discriminator logs
-                loss_filepath = os.path.join(results_folder,'CGGAN_discriminator_loss.dat')
+                loss_filepath = os.path.join(results_folder,'CGGAN_discriminator_loss.csv')
                 with open(loss_filepath,'w') as f:
-                    if not os.path.isfile(loss_filepath):
-                        f.write('Epoch{}Training{}CV\n'.format(delimiter,delimiter))
+                    f.write('Epoch{}Training{}CV\n'.format(delimiter,delimiter))
                     for i in range(nepoch):
-                        f.write('{:d}{}{:.2f}{}{:.2f}\n').format(i+1,delimiter,disc_loss_train[i],delimiter,disc_loss_cv[i])
-                metrics_filepath = os.path.join(results_folder,'CGGAN_discriminator_metrics.dat')
+                        f.write('%d%s%.2f%s%.2f\n' %(i+1,delimiter,disc_loss_train[i],delimiter,disc_loss_cv[i]))
+                metrics_filepath = os.path.join(results_folder,'CGGAN_discriminator_metrics.csv')
                 with open(metrics_filepath,'w') as f:
-                    if not os.path.isfile(metrics_filepath):
-                        f.write('Epoch{}Training{}CV\n'.format(delimiter,delimiter))
+                    f.write('Epoch{}Training{}CV\n'.format(delimiter,delimiter))
                     for i in range(nepoch):
-                        f.write('{:d}{}{:.2f}{}{:.2f}\n').format(i+1,delimiter,disc_metric_train[i],delimiter,disc_metric_cv[i])
+                        f.write('%d%s%.2f%s%.2f\n' %(i+1,delimiter,disc_metric_train[i],delimiter,disc_metric_cv[i]))
                 # Export generator logs
                 loss_filepath = os.path.join(results_folder,'CGGAN_generator_loss.csv')
                 with open(loss_filepath,'w') as f:
-                    if not os.path.isfile(loss_filepath):
-                        f.write('Epoch{}Training{}CV\n'.format(delimiter,delimiter))
+                    f.write('Epoch{}Training{}CV\n'.format(delimiter,delimiter))
                     for i in range(nepoch):
-                        f.write('{:d}{}{:.2f}{}{:.2f}\n').format(i+1,delimiter,gen_loss_train[i],delimiter,gen_loss_cv[i])
-                metrics_filepath = os.path.join(results_folder,'CGGAN_generator_metrics.dat')
+                        f.write('%d%s%.2f%s%.2f\n' %(i+1,delimiter,gen_loss_train[i],delimiter,gen_loss_cv[i]))
+                metrics_filepath = os.path.join(results_folder,'CGGAN_generator_metrics.csv')
                 with open(metrics_filepath,'w') as f:
-                    if not os.path.isfile(metrics_filepath):
-                        f.write('Epoch{}Training{}CV\n'.format(delimiter,delimiter))
+                    f.write('Epoch{}Training{}CV\n'.format(delimiter,delimiter))
                     for i in range(nepoch):
-                        f.write('{:d}{}{:.2f}{}{:.2f}\n').format(i+1,delimiter,gen_metric_train[i],delimiter,gen_metric_cv[i])
+                        f.write('%d%s%.2f%s%.2f\n' %(i+1,delimiter,gen_metric_train[i],delimiter,gen_metric_cv[i]))
 
                 ## PLOTS ##
-                # Discriminator
-                fig_disc, ax_disc = plt.subplots(1)
-                ax_disc.plot(epochs,disc_loss_train,label='Training',color='r')
-                ax_disc.plot(epochs,disc_loss_cv,label='Cross-validation',color='b')
-                ax_disc.grid()
-                ax_disc.set_xlabel('Epochs',size=12)
-                ax_disc.set_ylabel('Loss',size=12)
-                ax_disc.tick_params('both',labelsize=10)
-                ax_disc.legend()
-                plt.suptitle('Discriminator loss evolution case = {}'.format(str(case_ID)))
+                # Discriminator loss
+                fig_disc, ax_disc = plt.subplots(2,1)
+                ax_disc[0].plot(epochs,disc_loss_train,label='Training',color='r')
+                ax_disc[0].plot(epochs,disc_loss_cv,label='Cross-validation',color='b')
+                ax_disc[1].plot(epochs,disc_metric_train,label='Training',color='r')
+                ax_disc[1].plot(epochs,disc_metric_cv,label='Cross-validation',color='b')
+                ax_disc[0].grid()
+                ax_disc[1].grid()
+                ax_disc[1].set_xlabel('Epochs',size=12)
+                ax_disc[0].set_ylabel('Loss',size=12)
+                ax_disc[1].set_ylabel('Accuracy',size=12)
+                ax_disc[0].tick_params('both',labelsize=10)
+                ax_disc[1].tick_params('both',labelsize=10)
+                ax_disc[0].legend()
+                plt.suptitle('Discriminator loss/accuracy evolution case = {}'.format(str(case_ID)))
 
-                # Generator
-                fig_gen, ax_gen = plt.subplots(1)
-                ax_gen.plot(epochs,gen_loss_train,label='Training',color='r')
-                ax_gen.plot(epochs,gen_loss_cv,label='Cross-validation',color='b')
-                ax_gen.grid()
-                ax_gen.set_xlabel('Epochs',size=12)
-                ax_gen.set_ylabel('Loss',size=12)
-                ax_gen.tick_params('both',labelsize=10)
-                ax_gen.legend()
-                plt.suptitle('Generator loss evolution case = {}'.format(str(case_ID)))
+                # Generator loss
+                fig_gen, ax_gen = plt.subplots(2,1)
+                ax_gen[0].plot(epochs,gen_loss_train,label='Training',color='r')
+                ax_gen[0].plot(epochs,gen_loss_cv,label='Cross-validation',color='b')
+                ax_gen[1].plot(epochs,gen_metric_train,label='Training',color='r')
+                ax_gen[1].plot(epochs,gen_metric_cv,label='Cross-validation',color='b')
+                ax_gen[0].grid()
+                ax_gen[1].grid()
+                ax_gen[1].set_xlabel('Epochs',size=12)
+                ax_gen[0].set_ylabel('Loss',size=12)
+                ax_gen[1].set_ylabel('Accuracy',size=12)
+                ax_gen[0].tick_params('both',labelsize=10)
+                ax_gen[1].tick_params('both',labelsize=10)
+                ax_gen[0].legend()
+                plt.suptitle('Generator loss/accuracy evolution case = {}'.format(str(case_ID)))
 
                 if sens_var:
                     if type(sens_var[1][i]) == str:

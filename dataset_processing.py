@@ -37,16 +37,16 @@ def read_dataset(case_folder, dataset_folder='Training', format='png'):
 
     return img_list
 
-def preprocess_image(img, new_dims):
+def preprocess_image(imgs, new_dims):
 
-    m = len(img)
+    m = len(imgs)
     imgs_processed = np.zeros((m,new_dims[1],new_dims[0]),dtype=np.float32)
     for i in range(m):
-        if img[i].shape[0:2] != (new_dims[1],new_dims[0]):
-            img_processed = ImageTransformer.resize(img[i],new_dims)
+        if imgs[i].shape[0:2] != (new_dims[1],new_dims[0]):
+            img_processed = ImageTransformer.resize(imgs[i],new_dims)
         else:
-            img_processed = img[i]
-        img_processed = cv.bitwise_not(img_processed)
+            img_processed = imgs[i]
+        imgs_processed[i] = cv.bitwise_not(img_processed)
 
     return imgs_processed
 
@@ -79,7 +79,5 @@ def get_tensorflow_datasets(data_train, data_cv, data_test, batch_size=32):
     dataset_train = create_dataset_pipeline(data_train,is_train=True,batch_size=batch_size)
     dataset_cv = create_dataset_pipeline(data_cv,is_train=False,batch_size=1)
     dataset_test = preprocess_data(data_test)
-    train_iterator = iter(dataset_train)
-    cv_iterator = iter(dataset_cv)
     
-    return dataset_train, train_iterator, dataset_cv, cv_iterator, dataset_test
+    return dataset_train, dataset_cv, dataset_test
