@@ -27,6 +27,53 @@ def performance_metric(logits, labels):
 
     return accuracy
 
+def get_gradient(Discriminator, real_0, fake_0, epsilon_0):
+    '''
+    Return the gradient of the critic's scores with respect to mixes of real and fake images.
+    Parameters:
+        crit: the critic model
+        real: a batch of real images
+        fake: a batch of fake images
+        epsilon: a vector of the uniformly random proportions of real/fake per mixed image
+    Returns:
+        gradient: the gradient of the critic's scores, with respect to the mixed image
+    '''
+    mixed_images = tf.Variable(real_0,shape=real_0.get_shape())
+    real = tf.Variable(real_0,shape=real_0.get_shape())
+    fake = tf.Variable(fake_0,shape=fake_0.get_shape())
+    epsilon = tf.Variable(epsilon_0)
+    with tf.GradientTape() as tape_gradient:
+        mixed_images = real*epsilon + fake*(1 - epsilon)
+        mixed_scores = Discriminator(mixed_images)   # Calculate the critic's scores on the mixed images
+    gradient = tape_gradient.gradient(target=mixed_scores,sources=mixed_images)
+
+    return gradient
+
+
+def gradient_penalty(gradient):
+    '''
+    Return the gradient penalty, given a gradient.
+    Given a batch of image gradients, you calculate the magnitude of each image's gradient
+    and penalize the mean quadratic distance of each magnitude to 1.
+    Parameters:
+        gradient: the gradient of the critic's scores, with respect to the mixed image
+    Returns:
+        penalty: the gradient penalty
+    '''
+    # Flatten the gradients so that each row captures one image
+    input_shape = gradient.get_shape()[1:].num_elements()
+    batch_size = gradient.get_shape()[0]
+    gradient = tf.reshape(gradient,(batch_size,input_shape))
+
+    # Calculate the magnitude of every row
+    gradient_norm = tf.math.reduce_euclidean_norm(gradient,axis=1)
+    # Penalize the mean squared distance of the gradient norms from 1
+    #### START CODE HERE ####
+    penalty = tf.reduce_mean((gradient_norm - tf.ones_like(gradient_norm))**2)
+
+    #### END CODE HERE ####
+    return penalty
+
 class Conv2D_block(tf.keras.Model):
     def __init__(self, num_channels, kernel_size, padding, stride, **kwargs):
         super(Conv2D_block,self).__init__()
@@ -152,6 +199,7 @@ class Dense_layer(tf.keras.Model):
         net = self.Activation(net)
 
         return net
+
 
 class Discriminator(tf.keras.Model):
 

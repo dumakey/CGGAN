@@ -20,7 +20,7 @@ import dataset_augmentation
 import postprocessing
 
 
-class CGenTrainer:
+class CGGAN:
 
     def __init__(self, launch_file):
 
@@ -66,6 +66,7 @@ class CGenTrainer:
             pass
 
         return container
+        
     def launch_analysis(self):
 
         analysis_ID = self.parameters.analysis['type']
@@ -256,6 +257,7 @@ class CGenTrainer:
         num_iter = nepoch * epoch_iter
         batch_size = self.parameters.training_parameters['batch_size']
         batch_shape = (batch_size,image_shape[1],image_shape[0],1)
+        l3_reg = self.parameters.training_parameters['l3_reg']
         l2_reg = self.parameters.training_parameters['l2_reg']
         l1_reg = self.parameters.training_parameters['l1_reg']
         dropout = self.parameters.training_parameters['dropout']
@@ -314,10 +316,13 @@ class CGenTrainer:
                 # Ground truth labels
                 fake_label_batch = tf.zeros((batch_size,1))
                 real_label_batch = tf.ones((batch_size,1))
+                # Mode collapse regularization penalty
+                discriminator_gradient = models.get_gradient(discriminator,real_image_batch,fake_image_batch,0.2)
+                mode_collapse_reg = models.gradient_penalty(discriminator_gradient)
                 # Loss computation
                 fake_loss_batch = loss(fake_logit_batch,fake_label_batch)
                 real_loss_batch = loss(real_logit_batch,real_label_batch)
-                disc_loss_batch = 0.5 * (fake_loss_batch + real_loss_batch) + sum(discriminator.losses)
+                disc_loss_batch = 0.5 * (fake_loss_batch + real_loss_batch) + sum(discriminator.losses) + l3_reg*mode_collapse_reg
                 # Metric computation
                 fake_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
                 real_metric_batch = metric_disc(real_logit_batch,real_label_batch).numpy()
@@ -401,7 +406,7 @@ class CGenTrainer:
                         break
 
                 # Print results
-                print('Epoch {}, Discriminator loss (T,CV): ({:.2f},{:.2f}), Discriminator accuracy (T,CV): ({:.2f},{:.2f}) ||'
+                print('Epoch {}, Discriminator loss (T,CV): ({:.2f},{:.2f}), Discriminator accuracy (T,CV): ({:.2f},{:.2f}) || '
                       'Generator loss (T,CV): ({:.2f},{:.2f}), Generator accuracy (T,CV): ({:.2f},{:.2f})'
                       .format(epoch+1,
                               self.model.History.disc_loss_train[epoch],
@@ -570,7 +575,14 @@ class CGenTrainer:
 
     def export_model(self, sens_var=None):
 
-        N = len(self.model.Model)
+        if type(self.model.Model) == list:
+            N = len(self.model.Model)
+            Model = self.model.Model
+            History = self.model.History
+        else:
+            N = 1
+            Model = [self.model.Model]
+            History = [self.model.History]
         case_ID = self.parameters.analysis['case_ID']
         for i in range(N):
             if sens_var:
@@ -595,17 +607,17 @@ class CGenTrainer:
 
             # Export history training
             with open(os.path.join(storage_dir,'History'),'wb') as f:
-                pickle.dump(self.model.History[i].history,f)
+                pickle.dump(History[i].history,f)
 
             # Save model
             # Export model arquitecture to JSON file
-            model_json = self.model.Model[i].to_json()
+            model_json = Model[i].to_json()
             with open(os.path.join(storage_dir,model_json_name),'w') as json_file:
                 json_file.write(model_json)
-            self.model.Model[i].save(os.path.join(storage_dir,model_folder_name.format(str(case_ID))))
+            Model[i].save(os.path.join(storage_dir,model_folder_name.format(str(case_ID))))
 
             # Export model weights to HDF5 file
-            self.model.Model[i].save_weights(os.path.join(storage_dir,model_weights_name))
+            Model[i].save_weights(os.path.join(storage_dir,model_weights_name))
 
     def reconstruct_model(self, mode='train'):
 
@@ -662,32 +674,6 @@ class CGenTrainer:
 
         return Model, History
 
-    def reconstruct_encoder_CNN(self):
-
-        img_dim = self.parameters.img_size
-        latent_dim = self.parameters.training_parameters['latent_dim']
-        enc_hidden_layers = self.parameters.training_parameters['enc_hidden_layers']
-        dec_hidden_layers = self.parameters.training_parameters['dec_hidden_layers']
-        activation = self.parameters.training_parameters['activation']
-        architecture = self.parameters.training_parameters['architecture']
-
-        storage_dir = os.path.join(self.case_dir,'Results','pretrained_model')
-
-        if architecture == 'cnn':
-            Encoder = models.encoder_lenet(img_dim,latent_dim,enc_hidden_layers,0.0,0.0,0.0,activation)
-        else:
-            Encoder = models.encoder(np.prod(img_dim),enc_hidden_layers,latent_dim,activation)
-        Encoder.compile(optimizer=tf.keras.optimizers.Adam(),loss=tf.keras.losses.MeanSquaredError())
-
-        # Load weights into new model
-        Model = models.VAE(img_dim,latent_dim,enc_hidden_layers,dec_hidden_layers,0.001,0.0,0.0,0.0,'relu','train',architecture)
-        Model.load_weights(os.path.join(storage_dir,'CGGAN_model_weights.h5'))
-        enc_CNN_last_layer_idx = [idx for (idx,weight) in enumerate(Model.weights) if weight.shape[0] == latent_dim][0]
-        encoder_weights = Model.get_weights()[:enc_CNN_last_layer_idx]
-        Encoder.set_weights(encoder_weights)
-
-        return Encoder
-
     def export_nn_log(self):
         def update_log(parameters, model):
             training = OrderedDict()
@@ -700,9 +686,7 @@ class CGenTrainer:
             training['ACTIVATION'] = parameters.training_parameters['activation']
             training['NUMBER OF EPOCHS'] = parameters.training_parameters['epochs']
             training['BATCH SIZE'] = parameters.training_parameters['batch_size']
-            training['LATENT DIMENSION'] = parameters.training_parameters['latent_dim']
-            training['ENCODER HIDDEN LAYERS'] = parameters.training_parameters['enc_hidden_layers']
-            training['DECODER HIDDEN LAYERS'] = parameters.training_parameters['dec_hidden_layers']
+            training['NOISE DIMENSION'] = parameters.training_parameters['noise_dim']
             training['OPTIMIZER'] = [model.optimizer._name for model in model.Model]
             training['METRICS'] = [model.metrics_names[-1] if model.metrics_names != None else None for model in model.Model]
 
@@ -781,5 +765,5 @@ class CGenTrainer:
                     '==================================================================================================\n')
 if __name__ == '__main__':
     launcher = r'C:\Users\juan.ramos\CGGAN\Scripts\launcher.dat'
-    trainer = CGenTrainer(launcher)
+    trainer = CGGAN(launcher)
     trainer.launch_analysis()

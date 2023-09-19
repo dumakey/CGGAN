@@ -70,8 +70,17 @@ def read_case_setup(launch_filepath):
         matches = re.findall('(\d+\.?\d*)',match.group(1))
         casedata.training_parameters['learning_rate'] = float(matches[0]) if len(matches) == 1 else [float(item) for item in matches]
 
+    # L1 regularizer
+    match = re.search('L1REG\s*=\s*(.*|NONE)',data)
+    if match:
+        matches = re.findall('(\d+\.?\d*)',match.group(1))
+        if matches:
+            casedata.training_parameters['l1_reg'] = float(matches[0]) if len(matches) == 1 else [float(item) for item in matches]
+        else:
+            casedata.training_parameters['l1_reg'] = 0.0
+
     # L2 regularizer
-    match = re.search('L2REG\s*=\s*(.*|NONE)', data)
+    match = re.search('L2REG\s*=\s*(.*|NONE)',data)
     if match:
         matches = re.findall('(\d+\.?\d*)',match.group(1))
         if matches:
@@ -79,14 +88,14 @@ def read_case_setup(launch_filepath):
         else:
             casedata.training_parameters['l2_reg'] = 0.0
 
-    # L1 regularizer
-    match = re.search('L1REG\s*=\s*(.*|NONE)', data)
+    # L3 regularizer
+    match = re.search('L3REG\s*=\s*(.*|NONE)',data)
     if match:
         matches = re.findall('(\d+\.?\d*)',match.group(1))
         if matches:
-            casedata.training_parameters['l1_reg'] = float(matches[0]) if len(matches) == 1 else [float(item) for item in matches]
+            casedata.training_parameters['l3_reg'] = float(matches[0]) if len(matches) == 1 else [float(item) for item in matches]
         else:
-            casedata.training_parameters['l1_reg'] = 0.0
+            casedata.training_parameters['l3_reg'] = 0.0
 
     # Dropout
     match = re.search('DROPOUT\s*=\s*(.*|NONE)', data)
@@ -280,8 +289,17 @@ def read_case_logfile(log_filepath):
         matches = re.findall('(\d+\.?\d*)',match.group(1))
         casedata.training_parameters['learning_rate'] = float(matches[0]) if len(matches) == 1 else [float(item) for item in matches]
 
+    # L1 regularizer
+    match = re.search('L1 REGULARIZER\s*=\s*\[*(.*|NONE)\]*',data)
+    if match:
+        matches = re.findall('(\d+\.?\d*)',match.group(1))
+        if matches:
+            casedata.training_parameters['l1_reg'] = float(matches[0]) if len(matches) == 1 else [float(item) for item in matches]
+        else:
+            casedata.training_parameters['l1_reg'] = 0.0
+
     # L2 regularizer
-    match = re.search('L2 REGULARIZER\s*=\s*\[*(.*|NONE)\]*', data)
+    match = re.search('L2 REGULARIZER\s*=\s*\[*(.*|NONE)\]*',data)
     if match:
         matches = re.findall('(\d+\.?\d*)',match.group(1))
         if matches:
@@ -289,14 +307,14 @@ def read_case_logfile(log_filepath):
         else:
             casedata.training_parameters['l2_reg'] = 0.0
 
-    # L1 regularizer
-    match = re.search('L1 REGULARIZER\s*=\s*\[*(.*|NONE)\]*', data)
+    # L3 regularizer
+    match = re.search('L3 REGULARIZER\s*=\s*\[*(.*|NONE)\]*',data)
     if match:
         matches = re.findall('(\d+\.?\d*)',match.group(1))
         if matches:
-            casedata.training_parameters['l1_reg'] = float(matches[0]) if len(matches) == 1 else [float(item) for item in matches]
+            casedata.training_parameters['l3_reg'] = float(matches[0]) if len(matches) == 1 else [float(item) for item in matches]
         else:
-            casedata.training_parameters['l1_reg'] = 0.0
+            casedata.training_parameters['l3_reg'] = 0.0
 
     # Dropout
     match = re.search('DROPOUT\s*=\s*\[*(.*|NONE)\]*', data)
