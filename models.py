@@ -4,30 +4,52 @@ import tensorflow as tf
 
 
 def swish(x, beta=1):
+
     return x * tf.keras.backend.sigmoid(beta * x)
 
 def sigmoid(x):
+
     return 1 / (1 + np.exp(-x))
 
-def loss_function():
-    loss = tf.keras.losses.BinaryCrossentropy()
-    # reg_loss = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.REGULARIZATION_LOSSES)
+def loss_function(model, discriminator, fake_logit, real_label, fake, real, reg):
 
-    return loss
+    if model == 'disc':
+        loss = tf.math.reduce_mean(fake_logit-real_label)
+        # Mode collapse regularization penalty
+        discriminator_gradient = get_gradient(discriminator,real,fake)
+        mode_collapse_reg = gradient_penalty(discriminator_gradient)
+    elif model == 'gen':
+        loss = tf.math.reduce_mean(fake_logit)
+        mode_collapse_reg = tf.constant(0.0)
+
+    return loss + reg * mode_collapse_reg
+
+def get_weights(input):
+
+    weights_sq_sum = 0
+    weights_abs_sum = 0
+    for weight in input.trainable_weights:
+        weight_np = weight.numpy()
+        weight_np = weight_np.reshape(np.prod(weight_np.shape))
+        for item in weight_np:
+            weights_sq_sum += item**2
+            weights_abs_sum += abs(item)
+
+    return weights_sq_sum, weights_abs_sum
 
 def optimizer(alpha):
+
     optimizer = tf.keras.optimizers.Adam(learning_rate=alpha,beta_1=0.9,beta_2=0.999,amsgrad=False)
 
     return optimizer
 
 def performance_metric(logits, labels):
 
-    corrects = tf.equal(logits,labels)
-    accuracy = tf.reduce_mean(tf.cast(corrects,tf.float32))
+    metric = tf.reduce_mean(tf.keras.losses.MSE(logits,labels))
 
-    return accuracy
+    return metric
 
-def get_gradient(Discriminator, real_0, fake_0, epsilon_0):
+def get_gradient(Discriminator, real_0, fake_0):
     '''
     Return the gradient of the critic's scores with respect to mixes of real and fake images.
     Parameters:
@@ -41,7 +63,8 @@ def get_gradient(Discriminator, real_0, fake_0, epsilon_0):
     mixed_images = tf.Variable(real_0,shape=real_0.get_shape())
     real = tf.Variable(real_0,shape=real_0.get_shape())
     fake = tf.Variable(fake_0,shape=fake_0.get_shape())
-    epsilon = tf.Variable(epsilon_0)
+    epsilon_0 = tf.random.uniform(real_0.get_shape())
+    epsilon = tf.Variable(epsilon_0,shape=epsilon_0.get_shape())
     with tf.GradientTape() as tape_gradient:
         mixed_images = real*epsilon + fake*(1 - epsilon)
         mixed_scores = Discriminator(mixed_images)   # Calculate the critic's scores on the mixed images
@@ -68,10 +91,8 @@ def gradient_penalty(gradient):
     # Calculate the magnitude of every row
     gradient_norm = tf.math.reduce_euclidean_norm(gradient,axis=1)
     # Penalize the mean squared distance of the gradient norms from 1
-    #### START CODE HERE ####
     penalty = tf.reduce_mean((gradient_norm - tf.ones_like(gradient_norm))**2)
 
-    #### END CODE HERE ####
     return penalty
 
 class Conv2D_block(tf.keras.Model):
@@ -79,13 +100,13 @@ class Conv2D_block(tf.keras.Model):
         super(Conv2D_block,self).__init__()
         if kwargs:
             parameters = list(kwargs.values())[0]
-            l2_reg = parameters['l2_reg']
-            l1_reg = parameters['l1_reg']
+            self.l2_reg = parameters['l2_reg']
+            self.l1_reg = parameters['l1_reg']
             dropout = parameters['dropout']
             activation = parameters['activation']
         else:
-            l2_reg = 0.0
-            l1_reg = 0.0
+            self.l2_reg = 0.0
+            self.l1_reg = 0.0
             dropout = 0.0
             activation = 'relu'
         num_channels = num_channels
@@ -97,8 +118,8 @@ class Conv2D_block(tf.keras.Model):
             self.Padding = tf.keras.layers.ZeroPadding2D(p)
         else:
             self.Padding = tf.keras.layers.Activation(None)
-        self.Conv2D = tf.keras.layers.Conv2D(num_channels,kernel_size=f,strides=s,padding='valid',
-                                     kernel_regularizer=tf.keras.regularizers.L1L2(l1=l1_reg,l2=l2_reg))
+        self.Conv2D = tf.keras.layers.Conv2D(num_channels,kernel_size=f,strides=s,padding='valid',kernel_initializer='glorot_normal',
+                                     kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1_reg,l2=self.l2_reg))
         self.BatchNorm = tf.keras.layers.BatchNormalization()
 
         if activation == 'leakyrelu':
@@ -134,20 +155,21 @@ class Conv2DTranspose_block(tf.keras.Model):
 
         if kwargs:
             parameters = list(kwargs.values())[0]
-            l2_reg = parameters['l2_reg']
-            l1_reg = parameters['l1_reg']
+            self.l2_reg = parameters['l2_reg']
+            self.l1_reg = parameters['l1_reg']
             dropout = parameters['dropout']
             activation = parameters['activation']
         else:
-            l2_reg = 0.0
-            l1_reg = 0.0
+            self.l2_reg = 0.0
+            self.l1_reg = 0.0
             dropout = parameters['dropout']
             activation = 'relu'
         f = kernel_size
         s = stride
 
         self.Conv2DTranspose = tf.keras.layers.Conv2DTranspose(num_channels,kernel_size=f,strides=s,padding='same',
-                                                      kernel_regularizer=tf.keras.regularizers.L1L2(l1=l1_reg,l2=l2_reg))
+                                                               kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1_reg,l2=self.l2_reg),
+                                                               kernel_initializer='glorot_normal')
         self.BatchNorm = tf.keras.layers.BatchNormalization()
 
         if activation == 'leakyrelu':
@@ -170,21 +192,24 @@ class Conv2DTranspose_block(tf.keras.Model):
     def __call__(self, X):
 
         net = self.Conv2DTranspose(X)
+        net = self.Dropout(net)
         net = self.BatchNorm(net)
         net = self.Activation(net)
-        net = self.Dropout(net)
 
         return net
 
 class Dense_layer(tf.keras.Model):
     def __init__(self, units, activation, l1_reg, l2_reg, dropout):
         super(Dense_layer, self).__init__()
+        self.l1_reg = l1_reg
+        self.l2_reg = l2_reg
 
-        self.Dense = tf.keras.layers.Dense(units=units,activation=None,kernel_regularizer=tf.keras.regularizers.L1L2(l1=l1_reg,l2=l2_reg))
+        self.Dense = tf.keras.layers.Dense(units=units,activation=None,kernel_initializer='glorot_normal',
+                                           kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1_reg,l2=self.l2_reg))
         self.Dropout = tf.keras.layers.Dropout(dropout)
         self.BatchNorm = tf.keras.layers.BatchNormalization()
         if activation == 'leakyrelu':
-            rate = 0.1
+            rate = 0.2
             self.Activation = tf.keras.layers.LeakyReLU(rate)
         elif activation == 'elu':
             self.Activation = tf.keras.layers.ELU()
@@ -199,7 +224,6 @@ class Dense_layer(tf.keras.Model):
         net = self.Activation(net)
 
         return net
-
 
 class Discriminator(tf.keras.Model):
 
@@ -303,27 +327,28 @@ class Discriminator(tf.keras.Model):
         return net
 
 class Generator(tf.keras.Model):
-    def __init__(self, activation, l2_reg, l1_reg, dropout):
+    def __init__(self, noise_dim, activation, l2_reg, l1_reg, dropout):
         super(Generator,self).__init__()
         self.l1 = l1_reg
         self.l2 = l2_reg
         self.dropout = dropout
 
-        dim_in = 10
-        filt_in = 256
-        self.Dense_1 = Dense_layer(dim_in*dim_in*filt_in,activation,l1_reg,l2_reg,dropout)
-        self.Reshape = tf.keras.layers.Reshape((dim_in,dim_in,filt_in))
+        filt_in = 128
+        f = 5
+        s = 2
+        self.Dense_1 = Dense_layer(noise_dim*noise_dim*filt_in,activation,l1_reg,l2_reg,dropout)
+        self.Reshape = tf.keras.layers.Reshape((noise_dim,noise_dim,filt_in))
         self.UpSampling_1 = tf.keras.layers.UpSampling2D()
-        self.Conv2DTranspose_1 = Conv2DTranspose_block(num_channels=int(filt_in/2),kernel_size=3,stride=1,
+        self.Conv2DTranspose_1 = Conv2DTranspose_block(num_channels=filt_in,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
         self.UpSampling_2 = tf.keras.layers.UpSampling2D()
-        self.Conv2DTranspose_2 = Conv2DTranspose_block(num_channels=int(filt_in/4),kernel_size=3,stride=1,
+        self.Conv2DTranspose_2 = Conv2DTranspose_block(num_channels=filt_in//2,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
         self.UpSampling_3 = tf.keras.layers.UpSampling2D()
-        self.Conv2DTranspose_3 = Conv2DTranspose_block(num_channels=int(filt_in/8),kernel_size=3,stride=1,
+        self.Conv2DTranspose_3 = Conv2DTranspose_block(num_channels=filt_in//8,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
         self.UpSampling_4 = tf.keras.layers.UpSampling2D()
-        self.Conv2DTranspose_4 = Conv2DTranspose_block(num_channels=1,kernel_size=3,stride=1,
+        self.Conv2DTranspose_4 = Conv2DTranspose_block(num_channels=1,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':'sigmoid'})
 
         self.model = {
@@ -397,13 +422,9 @@ class Generator(tf.keras.Model):
 
         net = self.Dense_1(X)
         net = self.Reshape(net)
-        net = self.UpSampling_1(net)
         net = self.Conv2DTranspose_1(net)
-        net = self.UpSampling_2(net)
         net = self.Conv2DTranspose_2(net)
-        net = self.UpSampling_3(net)
         net = self.Conv2DTranspose_3(net)
-        net = self.UpSampling_4(net)
         net = self.Conv2DTranspose_4(net)
 
         return net

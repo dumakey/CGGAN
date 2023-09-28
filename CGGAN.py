@@ -26,7 +26,6 @@ class CGGAN:
 
         self.parameters = self.create_container()
         self.datasets = self.create_container()
-        self.datasets.iterators = self.create_container()
         self.model = self.create_container()
         self.predictions = self.create_container()
 
@@ -234,7 +233,7 @@ class CGGAN:
         if self.model.imported == False:
             self.singletraining()
 
-        if not hasattr(self, 'data_train'):
+        if not hasattr(self,'data_train'):
             data_train, data_cv, data_test = dataset_processing.get_datasets(case_dir,training_size,img_size)
             for model in self.model.Model:
                 postprocessing.plot_dataset_samples(data_train,model.predict,n_samples,img_size,storage_dir,stage='Train')
@@ -265,169 +264,178 @@ class CGGAN:
 
         # Create model containers
         if sens_var != None:
+            # compute the sweep number
+            if type(alpha) == list:
+                N = len(alpha)
+            elif type(l2_reg) == list:
+                N = len(l2_reg)
+            elif type(l1_reg) == list:
+                N = len(l1_reg)
+            elif type(dropout) == list:
+                N = len(dropout)
+            elif type(activation) == list:
+                N = len(activation)
+
             self.model.Model = []
-            history = self.create_container()
             self.model.History = []
+            self.model.Optimizers = []
         else:
-            self.model.Model = self.create_container()
-            self.model.History = self.create_container()
+            N = 1
+            self.model.Model = [self.create_container()]
+            self.model.History = [self.create_container()]
+            self.model.Optimizers = [self.create_container()]
 
-        # Training variables
-        self.model.History.disc_loss_train = np.zeros([nepoch,])
-        self.model.History.disc_metric_train = np.zeros([nepoch,])
-        self.model.History.gen_loss_train = np.zeros([nepoch,])
-        self.model.History.gen_metric_train = np.zeros([nepoch,])
-        # Validation variables
-        self.model.History.disc_loss_cv = np.zeros([nepoch,])
-        self.model.History.disc_metric_cv = np.zeros([nepoch,])
-        self.model.History.gen_loss_cv = np.zeros([nepoch,])
-        self.model.History.gen_metric_cv = np.zeros([nepoch,])
+        for i in range(N):
+            # Training variables
+            self.model.History[i].disc_loss_train = np.zeros([nepoch,])
+            self.model.History[i].disc_metric_train = np.zeros([nepoch,])
+            self.model.History[i].gen_loss_train = np.zeros([nepoch,])
+            self.model.History[i].gen_metric_train = np.zeros([nepoch,])
+            # Validation variables
+            self.model.History[i].disc_loss_cv = np.zeros([nepoch,])
+            self.model.History[i].disc_metric_cv = np.zeros([nepoch,])
+            self.model.History[i].gen_loss_cv = np.zeros([nepoch,])
+            self.model.History[i].gen_metric_cv = np.zeros([nepoch,])
 
-        # Models and functions declaration
-        discriminator = models.Discriminator(activation,l2_reg,l1_reg,dropout)
-        generator = models.Generator(activation,l2_reg,l1_reg,dropout)
-        disc_optimizer = models.optimizer(alpha)
-        gen_optimizer = models.optimizer(alpha)
-        loss = models.loss_function()
-        metric_disc = models.performance_metric
-        metric_gen = models.performance_metric
+            # Models and functions declaration
+            discriminator = self.model.Model[i].Discriminator = models.Discriminator(activation,l2_reg,l1_reg,dropout)
+            generator = self.model.Model[i].Generator = models.Generator(noise_dim,activation,l2_reg,l1_reg,dropout)
+            disc_optimizer = self.model.Optimizers[i].disc_optimizer = models.optimizer(alpha)
+            gen_optimizer = self.model.Optimizers[i].gen_optimizer = models.optimizer(0.5*alpha)
+            loss = models.loss_function
+            metric_disc = models.performance_metric
+            metric_gen = models.performance_metric
 
-        epoch = 0
-        disc_streaming_loss = 0
-        disc_streaming_loss_cv = 0
-        disc_streaming_metric = 0
-        disc_streaming_metric_cv = 0
-        gen_streaming_loss = 0
-        gen_streaming_loss_cv = 0
-        gen_streaming_metric = 0
-        gen_streaming_metric_cv = 0
+            epoch = 0
+            disc_streaming_loss = 0
+            disc_streaming_loss_cv = 0
+            disc_streaming_metric = 0
+            disc_streaming_metric_cv = 0
+            gen_streaming_loss = 0
+            gen_streaming_loss_cv = 0
+            gen_streaming_metric = 0
+            gen_streaming_metric_cv = 0
 
-        # Create iterator
-        train_iterator = iter(self.datasets.dataset_train)
-        for i in range(1,num_iter + 1):
-            ### Update discriminator
-            with tf.GradientTape() as tape_disc:
-                real_image_batch = tf.reshape(train_iterator.get_next(),batch_shape)
-                noise_batch = tf.random.normal((batch_size,noise_dim))
-                fake_image_batch = generator(noise_batch)
-                # Prediction computations
-                fake_logit_batch = discriminator(fake_image_batch)
-                real_logit_batch = discriminator(real_image_batch)
-                # Ground truth labels
-                fake_label_batch = tf.zeros((batch_size,1))
-                real_label_batch = tf.ones((batch_size,1))
-                # Mode collapse regularization penalty
-                discriminator_gradient = models.get_gradient(discriminator,real_image_batch,fake_image_batch,0.2)
-                mode_collapse_reg = models.gradient_penalty(discriminator_gradient)
-                # Loss computation
-                fake_loss_batch = loss(fake_logit_batch,fake_label_batch)
-                real_loss_batch = loss(real_logit_batch,real_label_batch)
-                disc_loss_batch = 0.5 * (fake_loss_batch + real_loss_batch) + sum(discriminator.losses) + l3_reg*mode_collapse_reg
-                # Metric computation
-                fake_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
-                real_metric_batch = metric_disc(real_logit_batch,real_label_batch).numpy()
-                disc_metric_batch = 0.5 * (fake_metric_batch + real_metric_batch)
-            # Weights update
-            disc_gradients = tape_disc.gradient(disc_loss_batch,discriminator.trainable_weights)
-            disc_optimizer.apply_gradients(zip(disc_gradients,discriminator.trainable_weights))
+            # Create iterator
+            train_iterator = iter(self.datasets.dataset_train)
+            for j in range(1,num_iter + 1):
+                ### Update discriminator
+                with tf.GradientTape() as tape_disc:
+                    real_image_batch = tf.reshape(train_iterator.get_next(),batch_shape)
+                    noise_batch = tf.random.normal((batch_size,noise_dim))
+                    fake_image_batch = generator(noise_batch)
+                    # Prediction computations
+                    fake_logit_batch = discriminator(fake_image_batch)
+                    real_logit_batch = discriminator(real_image_batch)
+                    # Ground truth labels
+                    fake_label_batch = tf.zeros((batch_size,1))
+                    real_label_batch = tf.ones((batch_size,1))
+                    # Loss computation
+                    fake_loss_batch = loss('disc',discriminator,fake_logit_batch,fake_label_batch,fake_image_batch,real_image_batch,l3_reg)
+                    #real_loss_batch = loss(discriminator,real_logit_batch,real_label_batch,fake_image_batch,real_image_batch,l3_reg)
+                    disc_loss_batch = fake_loss_batch + sum(discriminator.losses)
+                    # Metric computation
+                    fake_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
+                    real_metric_batch = metric_disc(real_logit_batch,real_label_batch).numpy()
+                    disc_metric_batch = 0.5 * (fake_metric_batch + real_metric_batch)
+                # Weights update
+                disc_gradients = tape_disc.gradient(disc_loss_batch,discriminator.trainable_weights)
+                disc_optimizer.apply_gradients(zip(disc_gradients,discriminator.trainable_weights))
 
-            ### Update generator
-            with tf.GradientTape() as tape_gen:
-                noise_batch = tf.random.normal((batch_size,noise_dim))
-                fake_image_batch = generator(noise_batch)
-                fake_logit_batch = discriminator(fake_image_batch)
-                fake_label_batch = tf.ones((batch_size,1))
-                gen_loss_batch = loss(fake_logit_batch,fake_label_batch) + sum(generator.losses)
-                gen_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
-            gen_gradients = tape_gen.gradient(gen_loss_batch,generator.trainable_variables)
-            gen_optimizer.apply_gradients(zip(gen_gradients,generator.trainable_variables))
+                ### Update generator
+                with tf.GradientTape() as tape_gen:
+                    noise_batch = tf.random.normal((batch_size,noise_dim))
+                    fake_image_batch = generator(noise_batch)
+                    fake_logit_batch = discriminator(fake_image_batch)
+                    #fake_label_batch = tf.ones((batch_size,1))
+                    gen_loss_batch = loss('gen',None,fake_logit_batch,None,None,None,0.0) + sum(generator.losses)
+                    gen_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
+                gen_gradients = tape_gen.gradient(gen_loss_batch,generator.trainable_weights)
+                gen_optimizer.apply_gradients(zip(gen_gradients,generator.trainable_weights))
 
-            disc_streaming_loss += disc_loss_batch
-            disc_streaming_metric += disc_metric_batch
-            gen_streaming_loss += gen_loss_batch
-            gen_streaming_metric += gen_metric_batch
+                disc_streaming_loss += disc_loss_batch
+                disc_streaming_metric += disc_metric_batch
+                gen_streaming_loss += gen_loss_batch
+                gen_streaming_metric += gen_metric_batch
 
-            if i % epoch_iter == 0:
-                # Cancel regularization terms for discriminator & generator
-                discriminator.set_up_CV_state()
-                generator.set_up_CV_state()
+                if j % epoch_iter == 0:
+                    # Cancel regularization terms for discriminator & generator
+                    discriminator.set_up_CV_state()
+                    generator.set_up_CV_state()
 
-                # Evaluate on training dataset
-                self.model.History.disc_loss_train[epoch] = disc_streaming_loss/epoch_iter
-                self.model.History.disc_metric_train[epoch] = disc_streaming_metric/epoch_iter
-                self.model.History.gen_loss_train[epoch] = gen_streaming_loss/epoch_iter
-                self.model.History.gen_metric_train[epoch] = gen_streaming_metric/epoch_iter
-                # Evaluate on cross-validation dataset
-                input_shape = (1,image_shape[1],image_shape[0],1)
-                niter = 0
-                cv_iterator = iter(self.datasets.dataset_cv) # create iterator for cross-validation dataset
-                while True:
-                    try:
-                        ## Evaluate discriminator
-                        real_image_cv = tf.reshape(cv_iterator.get_next(),input_shape)
-                        noise_cv = tf.random.normal((1,noise_dim))
-                        fake_image_cv = generator(noise_cv)
-                        # Prediction computations
-                        fake_logit_cv = discriminator(fake_image_cv)
-                        real_logit_cv = discriminator(real_image_cv)
-                        # Ground truth labels
-                        fake_label_cv = tf.zeros((1,1))
-                        real_label_cv = tf.ones((1,1))
-                        # Loss computation
-                        fake_loss_cv = loss(fake_logit_cv,fake_label_cv)
-                        real_loss_cv = loss(real_logit_cv,real_label_cv)
-                        disc_loss_cv = 0.5 * (fake_loss_cv + real_loss_cv)
-                        # Metric computation
-                        fake_metric_cv = metric_disc(fake_logit_cv,fake_label_cv).numpy()
-                        real_metric_cv = metric_disc(real_logit_cv,real_label_cv).numpy()
-                        disc_metric_cv = 0.5 * (fake_metric_cv + real_metric_cv)
+                    # Evaluate on training dataset
+                    self.model.History[i].disc_loss_train[epoch] = disc_streaming_loss/epoch_iter
+                    self.model.History[i].disc_metric_train[epoch] = disc_streaming_metric/epoch_iter
+                    self.model.History[i].gen_loss_train[epoch] = gen_streaming_loss/epoch_iter
+                    self.model.History[i].gen_metric_train[epoch] = gen_streaming_metric/epoch_iter
+                    # Evaluate on cross-validation dataset
+                    input_shape = (1,image_shape[1],image_shape[0],1)
+                    niter = 0
+                    cv_iterator = iter(self.datasets.dataset_cv) # create iterator for cross-validation dataset
+                    while True:
+                        try:
+                            ## Evaluate discriminator
+                            real_image_cv = tf.reshape(cv_iterator.get_next(),input_shape)
+                            noise_cv = tf.random.normal((1,noise_dim))
+                            fake_image_cv = generator(noise_cv)
+                            # Prediction computations
+                            fake_logit_cv = discriminator(fake_image_cv)
+                            real_logit_cv = discriminator(real_image_cv)
+                            # Ground truth labels
+                            fake_label_cv = tf.zeros((1,1))
+                            real_label_cv = tf.ones((1,1))
+                            # Loss computation
+                            disc_loss_cv = loss('disc',discriminator,fake_logit_cv,fake_label_cv,fake_image_cv,real_image_cv,0.0)
+                            # Metric computation
+                            fake_metric_cv = metric_disc(fake_logit_cv,fake_label_cv).numpy()
+                            real_metric_cv = metric_disc(real_logit_cv,real_label_cv).numpy()
+                            disc_metric_cv = 0.5 * (fake_metric_cv + real_metric_cv)
 
-                        ## Evaluate generator
-                        noise_cv = tf.random.normal((1,noise_dim))
-                        fake_image_cv = generator(noise_cv)
-                        fake_logit_cv = discriminator(fake_image_cv)
-                        fake_label_cv = tf.ones((1,1))
-                        gen_loss_cv = loss(fake_logit_cv,fake_label_cv)
-                        gen_metric_cv = metric_disc(fake_logit_cv,fake_label_cv).numpy()
+                            ## Evaluate generator
+                            noise_cv = tf.random.normal((1,noise_dim))
+                            fake_image_cv = generator(noise_cv)
+                            fake_logit_cv = discriminator(fake_image_cv)
+                            gen_loss_cv = loss('gen',None,fake_logit_batch,None,None,None,0.0)
+                            gen_metric_cv = metric_disc(fake_logit_cv,fake_label_cv).numpy()
 
-                        disc_streaming_loss_cv += disc_loss_cv
-                        disc_streaming_metric_cv += disc_metric_cv
-                        gen_streaming_loss_cv += gen_loss_cv
-                        gen_streaming_metric_cv += gen_metric_cv
-                        niter += 1
-                    except tf.errors.OutOfRangeError:
-                        self.model.History.disc_loss_cv[epoch] = disc_streaming_loss_cv/niter
-                        self.model.History.disc_metric_cv[epoch] = disc_streaming_metric_cv/niter
-                        self.model.History.gen_loss_cv[epoch] = gen_streaming_loss_cv/niter
-                        self.model.History.gen_metric_cv[epoch] = gen_streaming_metric_cv/niter
-                        niter = 0
-                        discriminator.set_up_training_state()  # cancel regularization terms for discriminator
-                        generator.set_up_training_state()  # cancel regularization terms for generator
-                        break
+                            disc_streaming_loss_cv += disc_loss_cv
+                            disc_streaming_metric_cv += disc_metric_cv
+                            gen_streaming_loss_cv += gen_loss_cv
+                            gen_streaming_metric_cv += gen_metric_cv
+                            niter += 1
+                        except tf.errors.OutOfRangeError:
+                            self.model.History[i].disc_loss_cv[epoch] = disc_streaming_loss_cv/niter
+                            self.model.History[i].disc_metric_cv[epoch] = disc_streaming_metric_cv/niter
+                            self.model.History[i].gen_loss_cv[epoch] = gen_streaming_loss_cv/niter
+                            self.model.History[i].gen_metric_cv[epoch] = gen_streaming_metric_cv/niter
+                            niter = 0
+                            discriminator.set_up_training_state()  # cancel regularization terms for discriminator
+                            generator.set_up_training_state()  # cancel regularization terms for generator
+                            break
 
-                # Print results
-                print('Epoch {}, Discriminator loss (T,CV): ({:.2f},{:.2f}), Discriminator accuracy (T,CV): ({:.2f},{:.2f}) || '
-                      'Generator loss (T,CV): ({:.2f},{:.2f}), Generator accuracy (T,CV): ({:.2f},{:.2f})'
-                      .format(epoch+1,
-                              self.model.History.disc_loss_train[epoch],
-                              self.model.History.disc_loss_cv[epoch],
-                              self.model.History.disc_metric_train[epoch],
-                              self.model.History.disc_metric_cv[epoch],
-                              self.model.History.gen_loss_train[epoch],
-                              self.model.History.gen_loss_cv[epoch],
-                              self.model.History.gen_metric_train[epoch],
-                              self.model.History.gen_metric_cv[epoch],))
+                    # Print results
+                    print('Epoch {}, Discriminator loss (T,CV): ({:.2f},{:.2f}), Discriminator metric (T,CV): ({:.2f},{:.2f}) || '
+                          'Generator loss (T,CV): ({:.2f},{:.2f}), Generator metric (T,CV): ({:.2f},{:.2f})'
+                          .format(epoch+1,
+                                  self.model.History[i].disc_loss_train[epoch],
+                                  self.model.History[i].disc_loss_cv[epoch],
+                                  self.model.History[i].disc_metric_train[epoch],
+                                  self.model.History[i].disc_metric_cv[epoch],
+                                  self.model.History[i].gen_loss_train[epoch],
+                                  self.model.History[i].gen_loss_cv[epoch],
+                                  self.model.History[i].gen_metric_train[epoch],
+                                  self.model.History[i].gen_metric_cv[epoch],))
 
-                # Reset streaming variables
-                disc_streaming_loss = 0
-                disc_streaming_loss_cv = 0
-                disc_streaming_metric = 0
-                disc_streaming_metric_cv = 0
-                gen_streaming_loss = 0
-                gen_streaming_loss_cv = 0
-                gen_streaming_metric = 0
-                gen_streaming_metric_cv = 0
-                epoch += 1
+                    # Reset streaming variables
+                    disc_streaming_loss = 0
+                    disc_streaming_loss_cv = 0
+                    disc_streaming_metric = 0
+                    disc_streaming_metric_cv = 0
+                    gen_streaming_loss = 0
+                    gen_streaming_loss_cv = 0
+                    gen_streaming_metric = 0
+                    gen_streaming_metric_cv = 0
+                    epoch += 1
 
     def generate_samples(self, parameters):
 
@@ -575,14 +583,7 @@ class CGGAN:
 
     def export_model(self, sens_var=None):
 
-        if type(self.model.Model) == list:
-            N = len(self.model.Model)
-            Model = self.model.Model
-            History = self.model.History
-        else:
-            N = 1
-            Model = [self.model.Model]
-            History = [self.model.History]
+        N = len(self.model.Model)
         case_ID = self.parameters.analysis['case_ID']
         for i in range(N):
             if sens_var:
@@ -592,32 +593,27 @@ class CGGAN:
                 else:
                     storage_dir = os.path.join(self.case_dir,'Results',str(case_ID),'Model','{}={:.3f}'
                                                .format(sens_var[0],sens_var[1][i]))
-                model_json_name = 'CGGAN_model_{}_{}={}_arquitecture.json'.format(str(case_ID),sens_var[0],str(sens_var[1][i]))
-                model_weights_name = 'CGGAN_model_{}_{}={}_weights.h5'.format(str(case_ID),sens_var[0],str(sens_var[1][i]))
-                model_folder_name = 'CGGAN_model_{}_{}={}'.format(str(case_ID),sens_var[0],str(sens_var[1][i]))
+                discriminator_model_name = 'CGGAN_discriminator_model_{}_{}={}'.format(str(case_ID),sens_var[0],str(sens_var[1][i]))
+                generator_model_name = 'CGGAN_generator_model_{}_{}={}'.format(str(case_ID),sens_var[0],str(sens_var[1][i]))
             else:
                 storage_dir = os.path.join(self.case_dir,'Results',str(case_ID),'Model')
-                model_json_name = 'CGGAN_model_{}_arquitecture.json'.format(str(case_ID))
-                model_weights_name = 'CGGAN_model_{}_weights.h5'.format(str(case_ID))
-                model_folder_name = 'CGGAN_model_{}'.format(str(case_ID))
+                discriminator_model_name = 'CGGAN_discriminator_model_{}'.format(str(case_ID))
+                generator_model_name = 'CGGAN_generator_model_{}'.format(str(case_ID))
 
             if os.path.exists(storage_dir):
                 rmtree(storage_dir)
             os.makedirs(storage_dir)
 
-            # Export history training
-            with open(os.path.join(storage_dir,'History'),'wb') as f:
-                pickle.dump(History[i].history,f)
-
-            # Save model
-            # Export model arquitecture to JSON file
-            model_json = Model[i].to_json()
-            with open(os.path.join(storage_dir,model_json_name),'w') as json_file:
-                json_file.write(model_json)
-            Model[i].save(os.path.join(storage_dir,model_folder_name.format(str(case_ID))))
-
-            # Export model weights to HDF5 file
-            Model[i].save_weights(os.path.join(storage_dir,model_weights_name))
+            # Discriminator storage
+            ckpt_disc = tf.train.Checkpoint(step=tf.Variable(1),optimizer=self.model.Optimizers[i].disc_optimizer,
+                                            model=self.model.Model[i].Discriminator)
+            manager_disc = tf.train.CheckpointManager(ckpt_disc,os.path.join(storage_dir,discriminator_model_name),max_to_keep=1)
+            ckpt_disc.save(os.path.join(storage_dir,discriminator_model_name))
+            # Generator storage
+            ckpt_gen = tf.train.Checkpoint(step=tf.Variable(1),optimizer=self.model.Optimizers[i].gen_optimizer,
+                                           model=self.model.Model[i].Generator)
+            manager_gen = tf.train.CheckpointManager(ckpt_gen,os.path.join(storage_dir,generator_model_name),max_to_keep=1)
+            ckpt_gen.save(os.path.join(storage_dir,generator_model_name))
 
     def reconstruct_model(self, mode='train'):
 
@@ -677,9 +673,9 @@ class CGGAN:
     def export_nn_log(self):
         def update_log(parameters, model):
             training = OrderedDict()
-            training['ARCHITECTURE'] = parameters.training_parameters['architecture']
             training['TRAINING SIZE'] = parameters.training_parameters['train_size']
             training['LEARNING RATE'] = parameters.training_parameters['learning_rate']
+            training['L3 REGULARIZER'] = parameters.training_parameters['l3_reg']
             training['L2 REGULARIZER'] = parameters.training_parameters['l2_reg']
             training['L1 REGULARIZER'] = parameters.training_parameters['l1_reg']
             training['DROPOUT'] = parameters.training_parameters['dropout']
@@ -687,15 +683,17 @@ class CGGAN:
             training['NUMBER OF EPOCHS'] = parameters.training_parameters['epochs']
             training['BATCH SIZE'] = parameters.training_parameters['batch_size']
             training['NOISE DIMENSION'] = parameters.training_parameters['noise_dim']
-            training['OPTIMIZER'] = [model.optimizer._name for model in model.Model]
-            training['METRICS'] = [model.metrics_names[-1] if model.metrics_names != None else None for model in model.Model]
+            training['DISCRIMINATOR OPTIMIZER'] = [optimizer.disc_optimizer._name for optimizer in model.Optimizers]
+            training['GENERATOR OPTIMIZER'] = [optimizer.gen_optimizer._name for optimizer in model.Optimizers]
 
             analysis = OrderedDict()
             analysis['CASE ID'] = parameters.analysis['case_ID']
             analysis['ANALYSIS'] = parameters.analysis['type']
             analysis['IMPORTED MODEL'] = parameters.analysis['import']
-            analysis['LAST TRAINING LOSS'] = ['{:.3f}'.format(history.history['loss'][-1]) for history in model.History]
-            analysis['LAST CV LOSS'] = ['{:.3f}'.format(history.history['val_loss'][-1]) for history in model.History]
+            analysis['DISCRIMINATOR LAST TRAINING LOSS'] = ['{:.3f}'.format(history.disc_loss_train[-1]) for history in model.History]
+            analysis['DISCRIMINATOR LAST CV LOSS'] = ['{:.3f}'.format(history.disc_loss_cv[-1]) for history in model.History]
+            analysis['GENERATOR LAST TRAINING LOSS'] = ['{:.3f}'.format(history.gen_loss_train[-1]) for history in model.History]
+            analysis['GENERATOR LAST CV LOSS'] = ['{:.3f}'.format(history.gen_loss_cv[-1]) for history in model.History]
 
             architecture = OrderedDict()
             architecture['INPUT SHAPE'] = parameters.img_size
@@ -732,7 +730,10 @@ class CGGAN:
                     f.write('--------------------------------------------------------------------------------------------------\n')
                     f.write('->MODEL\n')
                     for model in self.model.Model:
-                        model.summary(print_fn=lambda x: f.write(x + '\n'))
+                        f.write('   DISCRIMINATOR:\n')
+                        [f.write('      ' + x.name + '\n') for x in model.Discriminator.layers]
+                        f.write('   GENERATOR:\n')
+                        [f.write('      ' + x.name + '\n') for x in model.Generator.layers]
                     f.write('==================================================================================================\n')
 
         else:
@@ -760,7 +761,10 @@ class CGGAN:
                     '--------------------------------------------------------------------------------------------------\n')
                 f.write('->MODEL\n')
                 for model in self.model.Model:
-                    model.summary(print_fn=lambda x: f.write(x + '\n'))
+                    f.write('   DISCRIMINATOR:\n')
+                    [f.write('      ' + x.name + '\n') for x in model.Discriminator.layers]
+                    f.write('   GENERATOR:\n')
+                    [f.write('      ' + x.name + '\n') for x in model.Generator.layers]
                 f.write(
                     '==================================================================================================\n')
 if __name__ == '__main__':
