@@ -11,15 +11,16 @@ def sigmoid(x):
 
     return 1 / (1 + np.exp(-x))
 
-def loss_function(model, discriminator, fake_logit, real_label, fake, real, reg):
+def loss_function(model, discriminator, fake_logit, real_logit, fake, real, reg):
 
+    #loss = tf.keras.losses.BinaryCrossentropy()(fake_logit,real_label)
     if model == 'disc':
-        loss = tf.math.reduce_mean(fake_logit-real_label)
+        loss = -tf.math.reduce_mean(real_logit-fake_logit)
         # Mode collapse regularization penalty
         discriminator_gradient = get_gradient(discriminator,real,fake)
         mode_collapse_reg = gradient_penalty(discriminator_gradient)
     elif model == 'gen':
-        loss = tf.math.reduce_mean(fake_logit)
+        loss = -tf.math.reduce_mean(fake_logit)
         mode_collapse_reg = tf.constant(0.0)
 
     return loss + reg * mode_collapse_reg
@@ -338,34 +339,36 @@ class Generator(tf.keras.Model):
         s = 2
         self.Dense_1 = Dense_layer(noise_dim*noise_dim*filt_in,activation,l1_reg,l2_reg,dropout)
         self.Reshape = tf.keras.layers.Reshape((noise_dim,noise_dim,filt_in))
-        self.UpSampling_1 = tf.keras.layers.UpSampling2D()
+        self.UpSampling = tf.keras.layers.UpSampling2D()
         self.Conv2DTranspose_1 = Conv2DTranspose_block(num_channels=filt_in,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
-        self.UpSampling_2 = tf.keras.layers.UpSampling2D()
         self.Conv2DTranspose_2 = Conv2DTranspose_block(num_channels=filt_in//2,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
-        self.UpSampling_3 = tf.keras.layers.UpSampling2D()
-        self.Conv2DTranspose_3 = Conv2DTranspose_block(num_channels=filt_in//8,kernel_size=f,stride=s,
+        self.Conv2DTranspose_3 = Conv2DTranspose_block(num_channels=filt_in//4,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
-        self.UpSampling_4 = tf.keras.layers.UpSampling2D()
-        self.Conv2DTranspose_4 = Conv2DTranspose_block(num_channels=1,kernel_size=f,stride=s,
-                                                       kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':'sigmoid'})
+        self.Conv2DTranspose_4 = Conv2DTranspose_block(num_channels=16,kernel_size=f,stride=s,
+                                                       kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
+        self.Conv2DTranspose_5 = Conv2DTranspose_block(num_channels=8,kernel_size=f,stride=s,
+                                                       kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
+        self.Conv2D = Conv2D_block(num_channels=1,kernel_size=3,padding=1,stride=2,
+                                   kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':'sigmoid'})
 
         self.model = {
         'Conv2DTranspose': [
         self.Conv2DTranspose_1,
         self.Conv2DTranspose_2,
         self.Conv2DTranspose_3,
-        self.Conv2DTranspose_4,
+        #self.Conv2DTranspose_4,
+        self.Conv2DTranspose_5,
+        ],
+        'Conv2D':[
+        self.Conv2D,
         ],
         'Dense':[
         self.Dense_1,
         ],
         'UpSampling': [
-        self.UpSampling_1,
-        self.UpSampling_2,
-        self.UpSampling_3,
-        self.UpSampling_4,
+        self.UpSampling,
         ],
         'Reshape': [self.Reshape],
         }
@@ -375,6 +378,13 @@ class Generator(tf.keras.Model):
 
             block.Conv2DTranspose.kernel_regularizer.l1 = l1
             block.Conv2DTranspose.kernel_regularizer.l2 = l2
+            block.Dropout.rate = dropout
+
+            return block
+        def set_up_conv2d_block(block, l1, l2, dropout):
+
+            block.Conv2D.kernel_regularizer.l1 = l1
+            block.Conv2D.kernel_regularizer.l2 = l2
             block.Dropout.rate = dropout
 
             return block
@@ -391,6 +401,8 @@ class Generator(tf.keras.Model):
             for layer in layers:
                 if layer_type == 'Conv2DTranspose':
                     layer = set_up_conv2dtranspose_block(layer,self.l1,self.l2,self.dropout)
+                elif layer_type == 'Conv2D':
+                    layer = set_up_conv2d_block(layer,self.l1,self.l2,self.dropout)
                 elif layer_type == 'Dense':
                     layer = set_up_dense_layer(layer,self.l1,self.l2,self.dropout)
 
@@ -400,6 +412,13 @@ class Generator(tf.keras.Model):
 
             block.Conv2DTranspose.kernel_regularizer.l1 = 0.0
             block.Conv2DTranspose.kernel_regularizer.l2 = 0.0
+            block.Dropout.rate = 0.0
+
+            return block
+        def set_up_conv2d_block(block):
+
+            block.Conv2D.kernel_regularizer.l1 = 0.0
+            block.Conv2D.kernel_regularizer.l2 = 0.0
             block.Dropout.rate = 0.0
 
             return block
@@ -415,16 +434,36 @@ class Generator(tf.keras.Model):
             for layer in layers:
                 if layer_type == 'Conv2DTranspose':
                     layer = set_up_conv2dtranspose_block(layer)
+                elif layer_type == 'Conv2D':
+                    layer = set_up_conv2d_block(layer)
                 elif layer_type == 'Dense':
                     layer = set_up_dense_layer(layer)
 
     def __call__(self, X):
 
+        '''
+        net = tf.keras.layers.Dense(units=7*7*128,activation=None,kernel_initializer='glorot_normal',
+                                    kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1,l2=self.l2))(X)
+        net = tf.keras.layers.LeakyReLU(0.2)(net)
+        net = tf.keras.layers.Reshape((7,7,128))(net)
+        net = tf.keras.layers.Conv2DTranspose(128,kernel_size=4,strides=2,padding='same',
+                                                               kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1,l2=self.l2),
+                                                               kernel_initializer='glorot_normal')(net)
+        net = tf.keras.layers.LeakyReLU(0.2)(net)
+        net = tf.keras.layers.Conv2DTranspose(128,kernel_size=4,strides=2,padding='same',
+                                                               kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1,l2=self.l2),
+                                                               kernel_initializer='glorot_normal')(net)
+        net = tf.keras.layers.LeakyReLU(0.2)(net)
+        net = tf.keras.layers.Conv2D(1,kernel_size=7,strides=2,padding='same',kernel_initializer='glorot_normal',
+                               kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1,l2=self.l2),activation='sigmoid')(net)
+        '''
         net = self.Dense_1(X)
         net = self.Reshape(net)
         net = self.Conv2DTranspose_1(net)
         net = self.Conv2DTranspose_2(net)
         net = self.Conv2DTranspose_3(net)
-        net = self.Conv2DTranspose_4(net)
+        #net = self.Conv2DTranspose_4(net)
+        net = self.Conv2DTranspose_5(net)
+        net = self.Conv2D(net)
 
         return net

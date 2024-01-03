@@ -301,7 +301,7 @@ class CGGAN:
             discriminator = self.model.Model[i].Discriminator = models.Discriminator(activation,l2_reg,l1_reg,dropout)
             generator = self.model.Model[i].Generator = models.Generator(noise_dim,activation,l2_reg,l1_reg,dropout)
             disc_optimizer = self.model.Optimizers[i].disc_optimizer = models.optimizer(alpha)
-            gen_optimizer = self.model.Optimizers[i].gen_optimizer = models.optimizer(0.5*alpha)
+            gen_optimizer = self.model.Optimizers[i].gen_optimizer = models.optimizer(10*alpha)
             loss = models.loss_function
             metric_disc = models.performance_metric
             metric_gen = models.performance_metric
@@ -316,6 +316,25 @@ class CGGAN:
             gen_streaming_metric = 0
             gen_streaming_metric_cv = 0
 
+            '''
+            (x_train, _), (x_test, _) = tf.keras.datasets.mnist.load_data()
+            x_train = x_train.astype("float32")/255.0
+            X_train = np.zeros((x_train.shape[0],image_shape[0],image_shape[1]),dtype=np.float32)
+            for j,img in enumerate(x_train):
+                X_train[j] = cv.resize(img,(image_shape[0],image_shape[1]),interpolation=cv.INTER_AREA)
+            dataset_train = tf.data.Dataset.from_tensor_slices(X_train)
+            dataset_train = dataset_train.shuffle(buffer_size=1024).batch(batch_size)
+
+            x_test = dataset_processing.preprocess_image(x_test,(image_shape[0],image_shape[1]))
+            x_test = x_test.astype("float32")/255.0
+            X_test = np.zeros((x_test.shape[0],image_shape[0],image_shape[1]),dtype=np.float32)
+            for j,img in enumerate(x_test):
+                X_test[j] = cv.resize(img,(image_shape[0],image_shape[1]),interpolation=cv.INTER_AREA)
+            dataset_test = tf.data.Dataset.from_tensor_slices(X_test)
+            dataset_test = dataset_test.shuffle(buffer_size=1024).batch(1)
+            train_iterator = iter(dataset_train)
+            '''
+
             # Create iterator
             train_iterator = iter(self.datasets.dataset_train)
             for j in range(1,num_iter + 1):
@@ -323,7 +342,7 @@ class CGGAN:
                 with tf.GradientTape() as tape_disc:
                     real_image_batch = tf.reshape(train_iterator.get_next(),batch_shape)
                     noise_batch = tf.random.normal((batch_size,noise_dim))
-                    fake_image_batch = generator(noise_batch)
+                    fake_image_batch = generator(noise_batch) * 0.05*tf.random.normal(batch_shape)
                     # Prediction computations
                     fake_logit_batch = discriminator(fake_image_batch)
                     real_logit_batch = discriminator(real_image_batch)
@@ -331,8 +350,7 @@ class CGGAN:
                     fake_label_batch = tf.zeros((batch_size,1))
                     real_label_batch = tf.ones((batch_size,1))
                     # Loss computation
-                    fake_loss_batch = loss('disc',discriminator,fake_logit_batch,fake_label_batch,fake_image_batch,real_image_batch,l3_reg)
-                    #real_loss_batch = loss(discriminator,real_logit_batch,real_label_batch,fake_image_batch,real_image_batch,l3_reg)
+                    fake_loss_batch = loss('disc',discriminator,fake_logit_batch,real_logit_batch,fake_image_batch,real_image_batch,l3_reg)
                     disc_loss_batch = fake_loss_batch + sum(discriminator.losses)
                     # Metric computation
                     fake_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
@@ -345,9 +363,9 @@ class CGGAN:
                 ### Update generator
                 with tf.GradientTape() as tape_gen:
                     noise_batch = tf.random.normal((batch_size,noise_dim))
-                    fake_image_batch = generator(noise_batch)
+                    fake_image_batch = generator(noise_batch) * 0.05*tf.random.normal(batch_shape)
                     fake_logit_batch = discriminator(fake_image_batch)
-                    #fake_label_batch = tf.ones((batch_size,1))
+                    fake_label_batch = tf.ones((batch_size,1))
                     gen_loss_batch = loss('gen',None,fake_logit_batch,None,None,None,0.0) + sum(generator.losses)
                     gen_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
                 gen_gradients = tape_gen.gradient(gen_loss_batch,generator.trainable_weights)
@@ -371,6 +389,7 @@ class CGGAN:
                     # Evaluate on cross-validation dataset
                     input_shape = (1,image_shape[1],image_shape[0],1)
                     niter = 0
+                    #cv_iterator = iter(dataset_test)
                     cv_iterator = iter(self.datasets.dataset_cv) # create iterator for cross-validation dataset
                     while True:
                         try:
@@ -385,7 +404,9 @@ class CGGAN:
                             fake_label_cv = tf.zeros((1,1))
                             real_label_cv = tf.ones((1,1))
                             # Loss computation
-                            disc_loss_cv = loss('disc',discriminator,fake_logit_cv,fake_label_cv,fake_image_cv,real_image_cv,0.0)
+                            fake_loss_cv = loss('disc',discriminator,fake_logit_cv,fake_label_cv,fake_image_cv,real_image_cv,0.0)
+                            real_loss_cv = loss('disc',discriminator,real_logit_cv,real_label_cv,fake_image_cv,real_image_cv,0.0)
+                            disc_loss_cv = 0.5 * (real_loss_cv + fake_loss_cv)
                             # Metric computation
                             fake_metric_cv = metric_disc(fake_logit_cv,fake_label_cv).numpy()
                             real_metric_cv = metric_disc(real_logit_cv,real_label_cv).numpy()
@@ -395,7 +416,8 @@ class CGGAN:
                             noise_cv = tf.random.normal((1,noise_dim))
                             fake_image_cv = generator(noise_cv)
                             fake_logit_cv = discriminator(fake_image_cv)
-                            gen_loss_cv = loss('gen',None,fake_logit_batch,None,None,None,0.0)
+                            fake_label_cv = tf.ones((1,1))
+                            gen_loss_cv = loss('gen',None,fake_logit_batch,fake_label_cv,None,None,0.0)
                             gen_metric_cv = metric_disc(fake_logit_cv,fake_label_cv).numpy()
 
                             disc_streaming_loss_cv += disc_loss_cv
@@ -403,6 +425,8 @@ class CGGAN:
                             gen_streaming_loss_cv += gen_loss_cv
                             gen_streaming_metric_cv += gen_metric_cv
                             niter += 1
+                            if niter == 10:
+                                break
                         except tf.errors.OutOfRangeError:
                             self.model.History[i].disc_loss_cv[epoch] = disc_streaming_loss_cv/niter
                             self.model.History[i].disc_metric_cv[epoch] = disc_streaming_metric_cv/niter
