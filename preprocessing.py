@@ -21,12 +21,12 @@ class ImageTransformer:
 
         scale = height / height_old
         if scale < 1:
-            new_frame = cv.resize(frame, (width, height), interpolation=cv.INTER_AREA)
+            new_frame = cv.resize(frame,(width,height),interpolation=cv.INTER_AREA)
         else:
-            new_frame = cv.resize(frame, (width, height), interpolation=cv.INTER_LINEAR)
+            new_frame = cv.resize(frame,(width,height),interpolation=cv.INTER_LINEAR)
 
         if plot == True:
-            cv.imshow('Resized', new_frame)
+            cv.imshow('Resized',new_frame)
             cv.waitKey(0)
 
         return new_frame

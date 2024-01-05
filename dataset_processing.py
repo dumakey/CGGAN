@@ -40,13 +40,14 @@ def read_dataset(case_folder, dataset_folder='Training', format='png'):
 def preprocess_image(imgs, new_dims):
 
     m = len(imgs)
-    imgs_processed = np.zeros((m,new_dims[1],new_dims[0]),dtype=np.float32)
+    width, height = new_dims
+    imgs_processed = np.zeros((m,height,width),dtype=np.float32)
     for i in range(m):
-        if imgs[i].shape[0:2] != (new_dims[1],new_dims[0]):
-            img_processed = ImageTransformer.resize(imgs[i],new_dims)
+        if imgs[i].shape[0:2] != (height,width):
+            img_processed = ImageTransformer.resize(imgs[i],(width,height))
         else:
             img_processed = imgs[i]
-        imgs_processed[i] = cv.bitwise_not(img_processed)
+        imgs_processed[i,:] = cv.bitwise_not(img_processed)
 
     return imgs_processed
 
