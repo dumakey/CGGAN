@@ -2,17 +2,21 @@ import os
 import numpy as np
 import tensorflow as tf
 
+def cost_function():
+
+    return tf.keras.losses.BinaryCrossentropy()
+
 def loss_function(model, discriminator, fake_logit, fake_label, real_logit, real_label, fake, real, reg):
 
-    cost_function = tf.keras.losses.BinaryCrossentropy()
+    J = cost_function()
     if model == 'disc':
-        loss = 0.5*(cost_function(fake_logit,fake_label) + cost_function(real_logit,real_label))
+        loss = 0.5*(J(fake_logit,fake_label) + J(real_logit,real_label))
         #loss = -tf.math.reduce_mean(real_logit-fake_logit)
         # Mode collapse regularization penalty
         discriminator_gradient = get_gradient(discriminator,real,fake)
         mode_collapse_reg = gradient_penalty(discriminator_gradient)
     elif model == 'gen':
-        loss = cost_function(fake_logit,fake_label)
+        loss = J(fake_logit,fake_label)
         #loss = -tf.math.reduce_mean(fake_logit)
         mode_collapse_reg = tf.constant(0.0)
 
@@ -24,9 +28,12 @@ def optimizer(alpha):
 
     return optimizer
 
+def base_metric():
+
+    return tf.keras.metrics.MeanSquaredError()
 def performance_metric(logits, labels):
 
-    metric = tf.reduce_mean(tf.keras.losses.MSE(logits,labels))
+    metric = tf.reduce_mean(base_metric()(logits,labels))
 
     return metric
 
@@ -308,7 +315,7 @@ class Generator(tf.keras.Model):
         self.dropout = dropout
 
         filt_in = 64
-        f = 3
+        f = 4
         s = 2
         fh = int(input_dim[0]/(2*s))
         fw = int(input_dim[1]/(2*s))
@@ -317,7 +324,7 @@ class Generator(tf.keras.Model):
         self.Reshape = tf.keras.layers.Reshape((fh,fw,fc))
         self.Conv2DTranspose_1 = Conv2DTranspose_block(num_channels=filt_in,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
-        self.Conv2DTranspose_2 = Conv2DTranspose_block(num_channels=filt_in//2,kernel_size=f,stride=s,
+        self.Conv2DTranspose_2 = Conv2DTranspose_block(num_channels=filt_in,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
         self.Conv2D = Conv2D_block(num_channels=1,kernel_size=7,padding='same',stride=1,
                                    kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':'sigmoid'})
@@ -335,6 +342,14 @@ class Generator(tf.keras.Model):
         ],
         'Reshape': [self.Reshape],
         }
+
+        self.structure = [
+            'Dense',
+            'Reshape',
+            'Conv2DTranspose_1',
+            'Conv2DTranspose_2',
+            'Conv2D',
+        ]
 
     def set_up_training_state(self):
         def set_up_conv2dtranspose_block(block, l1, l2, dropout):
@@ -411,3 +426,15 @@ class Generator(tf.keras.Model):
         net = self.Conv2D(net)
 
         return net
+
+def convert_to_keras_model(model, input_shape, output_shape, compilation_parameters):
+
+    X_input = tf.keras.layers.Input(shape=input_shape)
+    net = X_input
+    for item in model.structure:
+        net = getattr(model,item)(net)
+
+    keras_model = tf.keras.Model(inputs=X_input,outputs=net,name='Keras_%s_Model'%model.name)
+    keras_model.compile(optimizer=compilation_parameters['optimizer'],loss=compilation_parameters['loss'],metrics=compilation_parameters['metric'])
+
+    return keras_model

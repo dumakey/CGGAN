@@ -41,7 +41,7 @@ def preprocess_image(imgs, new_dims):
 
     m = len(imgs)
     width, height = new_dims
-    imgs_processed = np.zeros((m,height,width),dtype=np.float32)
+    imgs_processed = np.zeros((m,height,width),dtype='uint8')
     for i in range(m):
         if imgs[i].shape[0:2] != (height,width):
             img_processed = ImageTransformer.resize(imgs[i],(width,height))
