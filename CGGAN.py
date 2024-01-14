@@ -94,8 +94,10 @@ class CGGAN:
 
         self.datasets.data_train, self.datasets.data_cv, self.datasets.data_test = \
         dataset_processing.get_datasets(case_dir,training_size,img_size)
+
         self.datasets.dataset_train, self.datasets.dataset_cv, self.datasets.dataset_test = \
         dataset_processing.get_tensorflow_datasets(self.datasets.data_train,self.datasets.data_cv,self.datasets.data_test,batch_size)
+        
         if self.model.imported == False:
             self.train_model(sens_variable)
         self.export_model_performance(sens_variable)
@@ -254,17 +256,17 @@ class CGGAN:
         # Parameters
         case_ID = self.parameters.analysis['case_ID']
         image_shape = (self.parameters.img_size[1],self.parameters.img_size[0],1)  # (height, width, channels)
-        noise_dim = self.parameters.training_parameters['noise_dim']
-        alpha = self.parameters.training_parameters['learning_rate']
         nepoch = self.parameters.training_parameters['epochs']
         epoch_iter = self.parameters.training_parameters['epoch_iter']
         num_iter = nepoch * epoch_iter
         batch_size = self.parameters.training_parameters['batch_size']
         batch_shape = (batch_size,*image_shape)
         sample_shape = (1,*image_shape)
-        l3_reg = self.parameters.training_parameters['l3_reg']
-        l2_reg = self.parameters.training_parameters['l2_reg']
+        noise_dim = self.parameters.training_parameters['noise_dim']
+        alpha = self.parameters.training_parameters['learning_rate']
         l1_reg = self.parameters.training_parameters['l1_reg']
+        l2_reg = self.parameters.training_parameters['l2_reg']
+        l3_reg = self.parameters.training_parameters['l3_reg']
         dropout = self.parameters.training_parameters['dropout']
         activation = self.parameters.training_parameters['activation']
 
@@ -273,23 +275,33 @@ class CGGAN:
             # compute the sweep number
             if type(alpha) == list:
                 N = len(alpha)
-            elif type(l2_reg) == list:
-                N = len(l2_reg)
             elif type(l1_reg) == list:
                 N = len(l1_reg)
+            elif type(l2_reg) == list:
+                N = len(l2_reg)
+            elif type(l3_reg) == list:
+                N = len(l3_reg)
             elif type(dropout) == list:
                 N = len(dropout)
             elif type(activation) == list:
-                N = len(activation)
-
-            self.model.Model = []
-            self.model.History = []
-            self.model.Optimizers = []
+                N = len(activation)            
+            elif type(noise_dim) == list:
+                N = len(noise_dim)
         else:
             N = 1
-            self.model.Model = [self.create_container()]
-            self.model.History = [self.create_container()]
-            self.model.Optimizers = [self.create_container()]
+
+        # List conversion
+        alpha = [alpha if type(alpha) != list else alpha[i] for i in range(N)]
+        noise_dim = [noise_dim if type(noise_dim) != list else noise_dim[i] for i in range(N)]
+        l1_reg = [l1_reg if type(l1_reg) != list else l1_reg[i] for i in range(N)]
+        l2_reg = [l2_reg if type(l2_reg) != list else l2_reg[i] for i in range(N)]
+        l3_reg = [l3_reg if type(l3_reg) != list else l3_reg[i] for i in range(N)]
+        activation = [activation if type(activation) != list else activation[i] for i in range(N)]
+        dropout = [dropout if type(dropout) != list else dropout[i] for i in range(N)]
+
+        self.model.Model = [self.create_container() for i in range(N)]
+        self.model.History = [self.create_container() for i in range(N)]
+        self.model.Optimizers = [self.create_container() for i in range(N)]
 
         for i in range(N):
             # Training variables
@@ -304,10 +316,10 @@ class CGGAN:
             self.model.History[i].gen_metric_cv = np.zeros([nepoch,])
 
             # Models and functions declaration
-            discriminator = self.model.Model[i].Discriminator = models.Discriminator(activation,l2_reg,l1_reg,dropout)
-            generator = self.model.Model[i].Generator = models.Generator(image_shape[:2],activation,l2_reg,l1_reg,dropout)
-            disc_optimizer = self.model.Optimizers[i].disc_optimizer = models.optimizer(2*alpha)
-            gen_optimizer = self.model.Optimizers[i].gen_optimizer = models.optimizer(alpha)
+            discriminator = self.model.Model[i].Discriminator = models.Discriminator(activation[i],l2_reg[i],l1_reg[i],dropout[i])
+            generator = self.model.Model[i].Generator = models.Generator(image_shape[:2],activation[i],l2_reg[i],l1_reg[i],dropout[i])
+            disc_optimizer = self.model.Optimizers[i].disc_optimizer = models.optimizer(2*alpha[i])
+            gen_optimizer = self.model.Optimizers[i].gen_optimizer = models.optimizer(alpha[i])
             loss = models.loss_function
             metric_disc = models.performance_metric
             metric_gen = models.performance_metric
@@ -322,7 +334,7 @@ class CGGAN:
             gen_streaming_metric = 0
             gen_streaming_metric_cv = 0
 
-
+            '''
             (x_train, _), (x_test, _) = tf.keras.datasets.mnist.load_data()
             X_train = dataset_processing.preprocess_image(x_train,(image_shape[1],image_shape[0]))
             X_train = np.reshape(X_train,(-1,image_shape[1],image_shape[0],1))
@@ -336,13 +348,14 @@ class CGGAN:
             dataset_test = dataset_test.map(dataset_processing.preprocess_tf_data,num_parallel_calls=8)
             dataset_test = dataset_test.shuffle(buffer_size=1024).batch(1)
             train_iterator = iter(dataset_train)
+            '''
 
             # Create iterator
-            #train_iterator = iter(self.datasets.dataset_train)
+            train_iterator = iter(self.datasets.dataset_train)
             for j in range(1,num_iter+1):
                 ### Update discriminator
                 real_image_batch = tf.reshape(train_iterator.get_next(),batch_shape)
-                noise_batch = tf.random.normal((batch_size,noise_dim))
+                noise_batch = tf.random.normal((batch_size,noise_dim[i]))
                 fake_image_batch = generator(noise_batch)
                 # Ground truth labels
                 fake_label_batch = tf.zeros((batch_size,1)) + 0.05 * tf.random.uniform((batch_size,1))
@@ -353,7 +366,7 @@ class CGGAN:
                     real_logit_batch = discriminator(real_image_batch)
                     # Loss computation
                     fake_loss_batch = loss('disc',discriminator,fake_logit_batch,fake_label_batch,real_logit_batch,
-                                           real_label_batch,fake_image_batch,real_image_batch,l3_reg)
+                                           real_label_batch,fake_image_batch,real_image_batch,l3_reg[i])
                     disc_loss_batch = fake_loss_batch + sum(discriminator.losses)
                     # Metric computation
                     fake_metric_batch = metric_disc(fake_logit_batch,fake_label_batch).numpy()
@@ -367,12 +380,12 @@ class CGGAN:
                 misleading_label_batch = tf.ones((batch_size,1))
 
                 ### Update generator
-                noise_batch = tf.random.normal((batch_size,noise_dim))
+                noise_batch = tf.random.normal((batch_size,noise_dim[i]))
                 with tf.GradientTape() as tape_gen:
                     fake_image_batch = generator(noise_batch)
                     fake_logit_batch = discriminator(fake_image_batch)
                     gen_loss_batch = loss('gen',None,fake_logit_batch,misleading_label_batch,None,None,None,None,0.0) + sum(generator.losses)
-                    gen_metric_batch = metric_gen(fake_logit_batch,fake_label_batch).numpy()
+                    gen_metric_batch = metric_gen(fake_logit_batch,misleading_label_batch).numpy()
                 gen_gradients = tape_gen.gradient(gen_loss_batch,generator.trainable_weights)
                 gen_optimizer.apply_gradients(zip(gen_gradients,generator.trainable_weights))
 
@@ -393,12 +406,12 @@ class CGGAN:
                     self.model.History[i].gen_metric_train[epoch-1] = gen_streaming_metric/epoch_iter
                     # Evaluate on cross-validation dataset
                     niter = 0
-                    cv_iterator = iter(dataset_test)
-                    #cv_iterator = iter(self.datasets.dataset_cv) # create iterator for cross-validation dataset
+                    #cv_iterator = iter(dataset_test)
+                    cv_iterator = iter(self.datasets.dataset_cv) # create iterator for cross-validation dataset
                     while niter < 10:
                         ## Evaluate discriminator
                         real_image_cv = tf.reshape(cv_iterator.get_next(),sample_shape)
-                        noise_cv = tf.random.normal((1,noise_dim))
+                        noise_cv = tf.random.normal((1,noise_dim[i]))
                         fake_image_cv = generator(noise_cv)
                         # Prediction computations
                         fake_logit_cv = discriminator(fake_image_cv)
@@ -414,12 +427,12 @@ class CGGAN:
                         disc_metric_cv = 0.5 * (fake_metric_cv + real_metric_cv)
 
                         ## Evaluate generator
-                        noise_cv = tf.random.normal((1,noise_dim))
+                        noise_cv = tf.random.normal((1,noise_dim[i]))
                         fake_image_cv = generator(noise_cv)
                         fake_logit_cv = discriminator(fake_image_cv)
-                        fake_label_cv = tf.ones((1,1))
-                        gen_loss_cv = loss('gen',None,fake_logit_batch,fake_label_cv,None,None,None,None,0.0)
-                        gen_metric_cv = metric_disc(fake_logit_cv,fake_label_cv).numpy()
+                        misleading_label_cv = tf.ones((1,1))
+                        gen_loss_cv = loss('gen',None,fake_logit_batch,misleading_label_cv,None,None,None,None,0.0)
+                        gen_metric_cv = metric_disc(fake_logit_cv,misleading_label_cv).numpy()
 
                         disc_streaming_loss_cv += disc_loss_cv
                         disc_streaming_metric_cv += disc_metric_cv
@@ -458,6 +471,8 @@ class CGGAN:
                     gen_streaming_metric = 0
                     gen_streaming_metric_cv = 0
                     epoch += 1
+
+            print()
 
     def generate_samples(self, parameters):
 
@@ -586,7 +601,17 @@ class CGGAN:
     def export_model(self, sens_var=None):
 
         N = len(self.model.Model)
+
+        # Parameters
         case_ID = self.parameters.analysis['case_ID']
+        alpha = self.parameters.training_parameters['learning_rate']
+        noise_dim = self.parameters.training_parameters['noise_dim']
+        img_dim = (self.parameters.img_size[1],self.parameters.img_size[0], 1)
+
+        # List conversion
+        alpha = [alpha if type(alpha) != list else alpha[i] for i in range(N)]
+        noise_dim = [noise_dim if type(noise_dim) != list else noise_dim[i] for i in range(N)]
+
         for i in range(N):
             if sens_var:
                 if type(sens_var[1][i]) == str:
@@ -607,13 +632,10 @@ class CGGAN:
             os.makedirs(storage_dir)
 
             # Save model
-            alpha = self.parameters.training_parameters['learning_rate']
-            noise_dim = self.parameters.training_parameters['noise_dim']
-            img_dim = (self.parameters.img_size[1], self.parameters.img_size[0],1)
-            compilation_parameters = {'optimizer':models.optimizer(alpha),'loss':models.cost_function(),
+            compilation_parameters = {'optimizer':models.optimizer(alpha[i]),'loss':models.cost_function(),
                                       'metric':models.base_metric()}
             # convert model to keras (to ease the process of loading and saving)
-            generator_keras = models.convert_to_keras_model(self.model.Model[i].Generator,noise_dim,img_dim,compilation_parameters)
+            generator_keras = models.convert_to_keras_model(self.model.Model[i].Generator,noise_dim[i],img_dim,compilation_parameters)
             generator_keras.save(os.path.join(storage_dir,generator_model_name))
 
 
@@ -680,15 +702,13 @@ class CGGAN:
 
             return training, analysis, architecture
 
-
-        parameters = self.parameters
-        if parameters.analysis['type'] == 'sensanalysis':
-            varname, varvalues = parameters.sens_variable
+        if self.parameters.analysis['type'] == 'sensanalysis':
+            varname, varvalues = self.parameters.sens_variable
             for value in varvalues:
-                parameters.training_parameters[varname] = value
-                training, analysis, architecture = update_log(parameters,self.model)
+                self.parameters.training_parameters[varname] = value
+                training, analysis, architecture = update_log(self.parameters,self.model)
 
-                case_ID = parameters.analysis['case_ID']
+                case_ID = self.parameters.analysis['case_ID']
                 if type(value) == str:
                     storage_folder = os.path.join(self.case_dir,'Results',str(case_ID),'Model','{}={}'.format(varname,value))
                 else:
@@ -699,6 +719,8 @@ class CGGAN:
                     f.write('->ANALYSIS\n')
                     for item in analysis.items():
                         f.write(item[0] + '=' + str(item[1]) + '\n')
+                    f.write('SENSITIVITY VARIABLE='+varname+'\n')
+                    f.write('SENSITIVITY VALUES='+str(varvalues)+'\n')
                     f.write('--------------------------------------------------------------------------------------------------\n')
                     f.write('->TRAINING\n')
                     for item in training.items():

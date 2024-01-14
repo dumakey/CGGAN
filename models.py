@@ -31,6 +31,7 @@ def optimizer(alpha):
 def base_metric():
 
     return tf.keras.metrics.MeanSquaredError()
+    
 def performance_metric(logits, labels):
 
     metric = tf.reduce_mean(base_metric()(logits,labels))
@@ -118,7 +119,7 @@ class Conv2D_block(tf.keras.Model):
         elif activation == 'swish':
             self.Activation = tf.keras.layers.Activation('swish')
         elif activation == 'elu':
-            self.Activation = tf.keras.layers.ELU
+            self.Activation = tf.keras.activations.elu
         elif activation == 'tanh':
             self.Activation = tf.keras.activations.tanh
         elif activation == 'sigmoid':
@@ -166,7 +167,7 @@ class Conv2DTranspose_block(tf.keras.Model):
         elif activation == 'swish':
             self.Activation = tf.keras.layers.Activation('swish')
         elif activation == 'elu':
-            self.Activation = tf.keras.layers.ELU
+            self.Activation = tf.keras.activations.elu
         elif activation == 'tanh':
             self.Activation = tf.keras.activations.tanh
         elif activation == 'sigmoid':
@@ -200,7 +201,7 @@ class Dense_layer(tf.keras.Model):
             rate = 0.2
             self.Activation = tf.keras.layers.LeakyReLU(rate)
         elif activation == 'elu':
-            self.Activation = tf.keras.layers.ELU()
+            self.Activation = tf.keras.activations.elu
         else:
             self.Activation = tf.keras.layers.Activation(activation)
 
@@ -222,7 +223,7 @@ class Discriminator(tf.keras.Model):
         self.l2 = l2_reg
         self.dropout = dropout
 
-        self.Conv2D_1 = Conv2D_block(num_channels=64,kernel_size=3,padding='same',stride=2,
+        self.Conv2D_1 = Conv2D_block(num_channels=64,kernel_size=5,padding='same',stride=2,
                                      kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
         self.Conv2D_2 = Conv2D_block(num_channels=128,kernel_size=3,padding='same',stride=2,
                                      kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
@@ -314,17 +315,17 @@ class Generator(tf.keras.Model):
         self.l2 = l2_reg
         self.dropout = dropout
 
-        filt_in = 64
+        filt_in = 128
         f = 4
         s = 2
         fh = int(input_dim[0]/(2*s))
         fw = int(input_dim[1]/(2*s))
-        fc = 4
+        fc = 32
         self.Dense = Dense_layer(fh*fw*fc,activation,l1_reg,l2_reg,dropout)
         self.Reshape = tf.keras.layers.Reshape((fh,fw,fc))
         self.Conv2DTranspose_1 = Conv2DTranspose_block(num_channels=filt_in,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
-        self.Conv2DTranspose_2 = Conv2DTranspose_block(num_channels=filt_in,kernel_size=f,stride=s,
+        self.Conv2DTranspose_2 = Conv2DTranspose_block(num_channels=filt_in//2,kernel_size=f,stride=s,
                                                        kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':activation})
         self.Conv2D = Conv2D_block(num_channels=1,kernel_size=7,padding='same',stride=1,
                                    kwargs={'l2_reg':l2_reg,'l1_reg':l1_reg,'dropout':dropout,'activation':'sigmoid'})
