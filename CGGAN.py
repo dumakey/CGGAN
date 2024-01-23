@@ -11,8 +11,6 @@ import cv2 as cv
 from random import randint
 
 import tensorflow as tf
-#from tensorflow.python.framework.ops import disable_eager_execution
-#disable_eager_execution()
 
 import reader
 import dataset_processing
@@ -166,18 +164,17 @@ class CGGAN:
 
         # Parameters
         case_dir = self.case_dir
-        img_dims = self.parameters.img_size
-        latent_dim = self.parameters.training_parameters['latent_dim']
+        img_size = self.parameters.img_size
         batch_size = self.parameters.training_parameters['batch_size']
         training_size = self.parameters.training_parameters['train_size']
         n = self.parameters.activation_plotting['n_samples']
-        case_ID = self.parameters.analysis['case_ID']
         figs_per_row = self.parameters.activation_plotting['n_cols']
         rows_to_cols_ratio = self.parameters.activation_plotting['rows2cols_ratio']
 
         # Generate datasets
         self.datasets.data_train, self.datasets.data_cv, self.datasets.data_test = \
-        dataset_processing.get_datasets(case_dir,training_size,img_dims)
+        dataset_processing.get_datasets(case_dir,training_size,img_size)
+
         self.datasets.dataset_train, self.datasets.dataset_cv, self.datasets.dataset_test = \
         dataset_processing.get_tensorflow_datasets(self.datasets.data_train,self.datasets.data_cv,self.datasets.data_test,batch_size)
 
@@ -187,25 +184,25 @@ class CGGAN:
         m = m_tr + m_cv + m_ts
 
         # Read datasets
-        dataset = np.zeros((m,np.prod(img_dims)),dtype='uint8')
+        dataset = np.zeros((m,*img_size),dtype='uint8')
         dataset[:m_tr,:] = self.datasets.data_train[0]
         dataset[m_tr:m_tr+m_cv,:] = self.datasets.data_cv[0]
         dataset[m_tr+m_cv:m,:] = self.datasets.data_test[0]
 
         # Index image sampling
-        idx = [randint(1,m) for i in range(n)]
+        idx = [randint(0,m-1) for i in range(n)]
         idx_set = set(idx)
         while len(idx) != len(idx_set):
             extra_item = randint(1,m)
             idx_set.add(extra_item)
 
         # Reconstruct encoder model
-        encoder = self.reconstruct_encoder_CNN()
+        _, Discriminator = self.reconstruct_model()
 
         # Plot
         for idx in idx_set:
             img = dataset[idx,:]
-            postprocessing.monitor_hidden_layers(img,encoder,case_dir,figs_per_row,rows_to_cols_ratio,idx)
+            postprocessing.monitor_hidden_layers(img,Discriminator,case_dir,figs_per_row,rows_to_cols_ratio,idx)
 
     def generate_augmented_data(self, transformations, augmented_dataset_size=1):
 
@@ -232,21 +229,11 @@ class CGGAN:
         # Read parameters
         case_dir = self.case_dir
         casedata = reader.read_case_logfile(os.path.join(case_dir,'Results','pretrained_model','CGGAN.log'))
-        n_samples = self.parameters.samples_generation['n_samples']
-        training_size = casedata.training_parameters['train_size']
         img_size = casedata.img_size
 
         if self.model.imported == False:
             self.singletraining()
 
-        '''
-        if not hasattr(self,'data_train'):
-            data_train, data_cv, data_test = dataset_processing.get_datasets(case_dir,training_size,img_size)
-            for model in self.model.Model:
-                postprocessing.plot_dataset_samples(data_train,model.predict,n_samples,img_size,storage_dir,stage='Train')
-                postprocessing.plot_dataset_samples(data_cv,model.predict,n_samples,img_size,storage_dir,stage='Cross-validation')
-                postprocessing.plot_dataset_samples(data_test,model.predict,n_samples,img_size,storage_dir,stage='Test')
-        '''
         ## GENERATE NEW DATA - SAMPLING ##
         X_samples = self.generate_samples(casedata)
         postprocessing.plot_generated_samples(X_samples,img_size,storage_dir)
@@ -254,7 +241,6 @@ class CGGAN:
     def train_model(self, sens_var=None):
 
         # Parameters
-        case_ID = self.parameters.analysis['case_ID']
         image_shape = (self.parameters.img_size[1],self.parameters.img_size[0],1)  # (height, width, channels)
         nepoch = self.parameters.training_parameters['epochs']
         epoch_iter = self.parameters.training_parameters['epoch_iter']
@@ -334,22 +320,6 @@ class CGGAN:
             gen_streaming_metric = 0
             gen_streaming_metric_cv = 0
 
-            '''
-            (x_train, _), (x_test, _) = tf.keras.datasets.mnist.load_data()
-            X_train = dataset_processing.preprocess_image(x_train,(image_shape[1],image_shape[0]))
-            X_train = np.reshape(X_train,(-1,image_shape[1],image_shape[0],1))
-            dataset_train = tf.data.Dataset.from_tensor_slices(X_train)
-            dataset_train = dataset_train.map(dataset_processing.preprocess_tf_data,num_parallel_calls=8)
-            dataset_train = dataset_train.shuffle(buffer_size=1024).repeat().batch(batch_size)
-
-            X_test = dataset_processing.preprocess_image(x_test,(image_shape[1],image_shape[0]))
-            X_test = np.reshape(X_test,(-1,image_shape[1],image_shape[0],1))
-            dataset_test = tf.data.Dataset.from_tensor_slices(X_test)
-            dataset_test = dataset_test.map(dataset_processing.preprocess_tf_data,num_parallel_calls=8)
-            dataset_test = dataset_test.shuffle(buffer_size=1024).batch(1)
-            train_iterator = iter(dataset_train)
-            '''
-
             # Create iterator
             train_iterator = iter(self.datasets.dataset_train)
             for j in range(1,num_iter+1):
@@ -406,7 +376,6 @@ class CGGAN:
                     self.model.History[i].gen_metric_train[epoch-1] = gen_streaming_metric/epoch_iter
                     # Evaluate on cross-validation dataset
                     niter = 0
-                    #cv_iterator = iter(dataset_test)
                     cv_iterator = iter(self.datasets.dataset_cv) # create iterator for cross-validation dataset
                     while niter < 10:
                         ## Evaluate discriminator
@@ -477,9 +446,7 @@ class CGGAN:
     def generate_samples(self, parameters):
 
         ## BUILD DECODER ##
-        output_dim = (parameters.img_size[1],parameters.img_size[0],1)  # (height, width, channels)
         noise_dim = parameters.training_parameters['noise_dim']
-        activation = parameters.training_parameters['activation']
         n_samples = self.parameters.samples_generation['n_samples']
 
         # Retrieve decoder weights
@@ -526,6 +493,15 @@ class CGGAN:
                 gen_metric_cv = h.gen_metric_cv
 
                 ## LOGS ##
+                if sens_var != None:
+                    if type(sens_var[1][j]) == str:
+                        results_folder = os.path.join(self.case_dir,'Results',str(case_ID),'Model_performance','{}={}'
+                                                      .format(sens_var[0],sens_var[1][j]))
+                    else:
+                        results_folder = os.path.join(self.case_dir,'Results',str(case_ID),'Model_performance','{}={:.3f}'
+                                                      .format(sens_var[0],sens_var[1][j]))
+                    os.mkdir(results_folder)
+                
                 # Export discriminator logs
                 loss_filepath = os.path.join(results_folder,'CGGAN_discriminator_loss.csv')
                 with open(loss_filepath,'w') as f:
@@ -583,13 +559,8 @@ class CGGAN:
                 plt.suptitle('Generator loss/accuracy evolution case = {}'.format(str(case_ID)))
 
                 if sens_var:
-                    if type(sens_var[1][i]) == str:
-                        results_folder = os.path.join(results_folder,'{}={}'.format(sens_var[0],sens_var[1][i]))
-                    else:
-                        results_folder = os.path.join(results_folder,'{}={:.3f}'.format(sens_var[0],sens_var[1][i]))
-                    os.mkdir(results_folder)
-                    disc_loss_plot_filename = 'Discriminator_performance_evolution_{}_{}={}.png'.format(str(case_ID),sens_var[0],str(sens_var[1][i]))
-                    gen_loss_plot_filename = 'Generator_performance_evolution_{}_{}={}.png'.format(str(case_ID),sens_var[0],str(sens_var[1][i]))
+                    disc_loss_plot_filename = 'Discriminator_performance_evolution_{}_{}={}.png'.format(str(case_ID),sens_var[0],str(sens_var[1][j]))
+                    gen_loss_plot_filename = 'Generator_performance_evolution_{}_{}={}.png'.format(str(case_ID),sens_var[0],str(sens_var[1][j]))
                 else:
                     disc_loss_plot_filename = 'Discriminator_performance_evolution_{}.png'.format(str(case_ID))
                     gen_loss_plot_filename = 'Generator_performance_evolution_{}.png'.format(str(case_ID))
@@ -630,13 +601,19 @@ class CGGAN:
             if os.path.exists(storage_dir):
                 rmtree(storage_dir)
             os.makedirs(storage_dir)
-
-            # Save model
+            
+            ### SAVE MODELS
             compilation_parameters = {'optimizer':models.optimizer(alpha[i]),'loss':models.cost_function(),
                                       'metric':models.base_metric()}
+            # Save generator model
             # convert model to keras (to ease the process of loading and saving)
             generator_keras = models.convert_to_keras_model(self.model.Model[i].Generator,noise_dim[i],img_dim,compilation_parameters)
-            generator_keras.save(os.path.join(storage_dir,generator_model_name))
+            generator_keras.save(os.path.join(storage_dir,generator_model_name))            
+            
+            # Save discriminator model
+            # convert model to keras (to ease the process of loading and saving)
+            discriminator_keras = models.convert_to_keras_model(self.model.Model[i].Discriminator,img_dim,1,compilation_parameters)
+            discriminator_keras.save(os.path.join(storage_dir,discriminator_model_name))
 
 
     def reconstruct_model(self, mode='train'):
@@ -647,32 +624,37 @@ class CGGAN:
             img_dim = (casedata.img_size[1],casedata.img_size[0],1)  # (height, width, channels)
             noise_dim = casedata.training_parameters['noise_dim']
             activation = casedata.training_parameters['activation']
+            alpha = casedata.training_parameters['learning_rate']
 
-            # Load weights into new models
-            alpha = self.parameters.training_parameters['learning_rate']
-            noise_dim = self.parameters.training_parameters['noise_dim']
-            img_dim = (self.parameters.img_size[1],self.parameters.img_size[0],1)
             optimizer = models.optimizer(alpha)
             loss = models.cost_function()
             metric = models.base_metric()
             compilation_parameters = {'optimizer':optimizer,'loss':loss,'metric':metric}
 
+            # Load Generator model
             generator = models.Generator(img_dim[:2],activation,0.0,0.0,0.0)
             generator_keras = models.convert_to_keras_model(generator,noise_dim,img_dim,compilation_parameters)
 
-            generator_folder = [item for item in os.listdir(storage_dir) if os.path.isdir(os.path.join(storage_dir,item)) if item.startswith('CGGAN_generator_model')][0]
+            generator_folder = [item for item in os.listdir(storage_dir) if os.path.isdir(os.path.join(storage_dir,item))
+                                if item.startswith('CGGAN_generator_model')][0]
             generator_keras.load_weights(os.path.join(storage_dir,generator_folder))
 
+            # Load Discriminator model
+            discriminator = models.Discriminator(activation,0.0,0.0,0.0)
+            discriminator_keras = models.convert_to_keras_model(discriminator,img_dim,1,compilation_parameters)
 
-            discriminator = None
-            print()
+            discriminator_folder = [item for item in os.listdir(storage_dir) if os.path.isdir(os.path.join(storage_dir,item))
+                                    if item.startswith('CGGAN_discriminator_model')][0]
+            discriminator_keras.load_weights(os.path.join(storage_dir,discriminator_folder))
+
 
         except:
             print('There is no model stored in the folder')
 
-        return generator, discriminator
+        return generator_keras, discriminator_keras
 
     def export_nn_log(self):
+    
         def update_log(parameters, model):
             training = OrderedDict()
             training['TRAINING SIZE'] = parameters.training_parameters['train_size']
@@ -740,7 +722,7 @@ class CGGAN:
 
         else:
             training, analysis, architecture = update_log(self.parameters,self.model)
-            case_ID = parameters.analysis['case_ID']
+            case_ID = self.parameters.analysis['case_ID']
             storage_folder = os.path.join(self.case_dir,'Results',str(case_ID))
             with open(os.path.join(storage_folder,'Model','CGGAN.log'),'w') as f:
                 f.write('CGGAN log file\n')
@@ -769,6 +751,7 @@ class CGGAN:
                     [f.write('      ' + x.name + '\n') for x in model.Generator.layers]
                 f.write(
                     '==================================================================================================\n')
+
 if __name__ == '__main__':
     launcher = r'C:\Users\juan.ramos\CGGAN\Scripts\launcher.dat'
     trainer = CGGAN(launcher)

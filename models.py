@@ -3,15 +3,17 @@ import numpy as np
 import tensorflow as tf
 
 def cost_function():
-
-    return tf.keras.losses.BinaryCrossentropy()
+    
+    #cost = -tf.math.reduce_mean(real_logit-fake_logit)
+    cost = tf.keras.losses.BinaryCrossentropy()
+    
+    return cost
 
 def loss_function(model, discriminator, fake_logit, fake_label, real_logit, real_label, fake, real, reg):
 
     J = cost_function()
     if model == 'disc':
         loss = 0.5*(J(fake_logit,fake_label) + J(real_logit,real_label))
-        #loss = -tf.math.reduce_mean(real_logit-fake_logit)
         # Mode collapse regularization penalty
         discriminator_gradient = get_gradient(discriminator,real,fake)
         mode_collapse_reg = gradient_penalty(discriminator_gradient)
@@ -214,9 +216,11 @@ class Dense_layer(tf.keras.Model):
 
         return net
 
-class Discriminator(tf.keras.Model):
-
-    """A simple linear model."""
+class Discriminator(tf.keras.Model):    
+    '''    
+    A model to assess whether an image is fake or real, taken as input
+    '''
+    
     def __init__(self, activation, l2_reg, l1_reg, dropout):
         super(Discriminator, self).__init__()
         self.l1 = l1_reg
@@ -244,6 +248,15 @@ class Discriminator(tf.keras.Model):
         self.Pool,
         ],
         }
+
+        self.structure = [
+            'Conv2D_1',
+            'Conv2D_2',
+            'Pool',
+            'Dense_1',
+            'Dense_2',
+        ]
+
     def set_up_CV_state(self):
 
         def set_up_conv2d_block(block):
@@ -309,6 +322,10 @@ class Discriminator(tf.keras.Model):
         return net
 
 class Generator(tf.keras.Model):
+    '''
+    A model to generate images from a latent vector
+    '''
+    
     def __init__(self, input_dim, activation, l2_reg, l1_reg, dropout):
         super(Generator,self).__init__()
         self.l1 = l1_reg
@@ -418,9 +435,9 @@ class Generator(tf.keras.Model):
                 elif layer_type == 'Dense':
                     layer = set_up_dense_layer(layer)
 
-    def __call__(self, X):
+    def __call__(self, t):
 
-        net = self.Dense(X)
+        net = self.Dense(t)
         net = self.Reshape(net)
         net = self.Conv2DTranspose_1(net)
         net = self.Conv2DTranspose_2(net)
