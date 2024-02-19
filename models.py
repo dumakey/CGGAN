@@ -87,6 +87,7 @@ def gradient_penalty(gradient):
     return penalty
 
 class Conv2D_block(tf.keras.Model):
+
     def __init__(self, num_channels, kernel_size, padding, stride, **kwargs):
         super(Conv2D_block,self).__init__()
         if kwargs:
@@ -100,37 +101,48 @@ class Conv2D_block(tf.keras.Model):
             self.l1_reg = 0.0
             dropout = 0.0
             activation = 'relu'
-
-        # Apply padding
+    
+        # Batch normalization layer
+        self.BatchNorm = tf.keras.layers.BatchNormalization()
+    
+        # Activation layer
+        if activation == 'leakyrelu':
+            rate = 0.2
+            self.Activation = tf.keras.layers.LeakyReLU(rate)
+            weights_init = tf.keras.initializers.LecunNormal()
+        elif activation == 'swish':
+            self.Activation = tf.keras.layers.Activation('swish')
+            weights_init = tf.keras.initializers.HeNormal()
+        elif activation == 'elu':
+            self.Activation = tf.keras.activations.elu
+            weights_init = tf.keras.initializers.HeNormal()
+        elif activation == 'tanh':
+            self.Activation = tf.keras.activations.tanh
+            weights_init = tf.keras.initializers.GlorotNormal()
+        elif activation == 'sigmoid':
+            self.Activation = tf.keras.activations.sigmoid
+            weights_init = tf.keras.initializers.GlorotNormal()
+        elif activation == 'linear':
+            self.Activation = tf.keras.activations('linear')
+            weights_init = tf.keras.initializers.GlorotNormal()
+        else:
+            self.Activation = tf.keras.layers.Activation('relu')
+            weights_init = tf.keras.initializers.HeNormal()
+            
+        # Dropout layer
+        self.Dropout = tf.keras.layers.Dropout(dropout)        
+        
+        # Padding & convolutional block
         if padding == 'same':
             self.Padding = tf.keras.layers.ZeroPadding2D(0)
             self.Conv2D = tf.keras.layers.Conv2D(num_channels,kernel_size,stride,padding='same',use_bias=True,
                                                  kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1_reg,l2=self.l2_reg),
-                                                 kernel_initializer='glorot_normal')
+                                                 kernel_initializer=weights_init)
         elif type(padding) == int:
             self.Padding = tf.keras.layers.ZeroPadding2D(padding)
             self.Conv2D = tf.keras.layers.Conv2D(num_channels,kernel_size,stride,padding='valid',use_bias=True,
                                                  kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1_reg,l2=self.l2_reg),
-                                                 kernel_initializer='glorot_normal')
-
-        self.BatchNorm = tf.keras.layers.BatchNormalization()
-
-        if activation == 'leakyrelu':
-            rate = 0.2
-            self.Activation = tf.keras.layers.LeakyReLU(rate)
-        elif activation == 'swish':
-            self.Activation = tf.keras.layers.Activation('swish')
-        elif activation == 'elu':
-            self.Activation = tf.keras.activations.elu
-        elif activation == 'tanh':
-            self.Activation = tf.keras.activations.tanh
-        elif activation == 'sigmoid':
-            self.Activation = tf.keras.activations.sigmoid
-        elif activation == 'linear':
-            self.Activation = tf.keras.activations('linear')
-        else:
-            self.Activation = tf.keras.layers.Activation('relu')
-        self.Dropout = tf.keras.layers.Dropout(dropout)
+                                                 kernel_initializer=weights_init)
 
     def __call__(self, X):
 
@@ -158,27 +170,40 @@ class Conv2DTranspose_block(tf.keras.Model):
             dropout = parameters['dropout']
             activation = 'relu'
 
-        self.Conv2DTranspose = tf.keras.layers.Conv2DTranspose(num_channels,kernel_size,stride,padding='same',
-                                                               kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1_reg,l2=self.l2_reg),
-                                                               kernel_initializer='glorot_normal')
+        # Batch normalization layer
         self.BatchNorm = tf.keras.layers.BatchNormalization()
 
+        # Activation layer
         if activation == 'leakyrelu':
             rate = 0.2
             self.Activation = tf.keras.layers.LeakyReLU(rate)
+            weights_init = tf.keras.initializers.LecunNormal()
         elif activation == 'swish':
             self.Activation = tf.keras.layers.Activation('swish')
+            weights_init = tf.keras.initializers.HeNormal()
         elif activation == 'elu':
             self.Activation = tf.keras.activations.elu
+            weights_init = tf.keras.initializers.HeNormal()
         elif activation == 'tanh':
             self.Activation = tf.keras.activations.tanh
+            weights_init = tf.keras.initializers.GlorotNormal()
         elif activation == 'sigmoid':
             self.Activation = tf.keras.activations.sigmoid
+            weights_init = tf.keras.initializers.GlorotNormal()
         elif activation == 'linear':
             self.Activation = tf.keras.activations('linear')
+            weights_init = tf.keras.initializers.GlorotNormal()
         else:
             self.Activation = tf.keras.layers.Activation('relu')
+            weights_init = tf.keras.initializers.HeNormal()
+        
+        # Dropout layer
         self.Dropout = tf.keras.layers.Dropout(dropout)
+        
+        # Convolutional layer
+        self.Conv2DTranspose = tf.keras.layers.Conv2DTranspose(num_channels,kernel_size,stride,padding='same',
+                                                               kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1_reg,l2=self.l2_reg),
+                                                               kernel_initializer=weights_init)
 
     def __call__(self, X):
 
@@ -195,18 +220,41 @@ class Dense_layer(tf.keras.Model):
         self.l1_reg = l1_reg
         self.l2_reg = l2_reg
 
-        self.Dense = tf.keras.layers.Dense(units=units,activation=None,kernel_initializer='glorot_normal',
-                                           kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1_reg,l2=self.l2_reg))
-        self.Dropout = tf.keras.layers.Dropout(dropout)
+        # Batch normalization layer
         self.BatchNorm = tf.keras.layers.BatchNormalization()
+        
+        # Activation layer
         if activation == 'leakyrelu':
             rate = 0.2
             self.Activation = tf.keras.layers.LeakyReLU(rate)
+            weights_init = tf.keras.initializers.LecunNormal()
+        elif activation == 'swish':
+            self.Activation = tf.keras.layers.Activation('swish')
+            weights_init = tf.keras.initializers.HeNormal()
         elif activation == 'elu':
             self.Activation = tf.keras.activations.elu
+            weights_init = tf.keras.initializers.HeNormal()
+        elif activation == 'tanh':
+            self.Activation = tf.keras.activations.tanh
+            weights_init = tf.keras.initializers.GlorotNormal()
+        elif activation == 'sigmoid':
+            self.Activation = tf.keras.activations.sigmoid
+            weights_init = tf.keras.initializers.GlorotNormal()
+        elif activation == 'linear':
+            self.Activation = tf.keras.activations('linear')
+            weights_init = tf.keras.initializers.GlorotNormal()
         else:
-            self.Activation = tf.keras.layers.Activation(activation)
-
+            self.Activation = tf.keras.layers.Activation('relu')
+            weights_init = tf.keras.initializers.HeNormal()
+            
+        # Dropout layer
+        self.Dropout = tf.keras.layers.Dropout(dropout)
+            
+        # Dense layer
+        self.Dense = tf.keras.layers.Dense(units=units,activation=None,kernel_initializer=weights_init,
+                                           kernel_regularizer=tf.keras.regularizers.L1L2(l1=self.l1_reg,l2=self.l2_reg))
+                                           
+                                           
     def call(self, X):
 
         net = self.Dense(X)
