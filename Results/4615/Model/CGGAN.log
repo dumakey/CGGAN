@@ -1,0 +1,42 @@
+CGGAN log file
+==================================================================================================
+->ANALYSIS
+CASE ID=4615
+ANALYSIS=traingenerate
+IMPORTED MODEL=0
+DISCRIMINATOR LAST TRAINING LOSS=['3.024']
+DISCRIMINATOR LAST CV LOSS=['3.139']
+GENERATOR LAST TRAINING LOSS=['10.894']
+GENERATOR LAST CV LOSS=['9.575']
+--------------------------------------------------------------------------------------------------
+->TRAINING
+TRAINING SIZE=0.75
+LEARNING RATE=0.0001
+L3 REGULARIZER=20.0
+L2 REGULARIZER=0.01
+L1 REGULARIZER=0.0
+DROPOUT=0.2
+ACTIVATION=gelu
+NUMBER OF EPOCHS=40
+BATCH SIZE=64
+NOISE DIMENSION=1024
+DISCRIMINATOR OPTIMIZER=['Adam']
+GENERATOR OPTIMIZER=['Adam']
+--------------------------------------------------------------------------------------------------
+->ARCHITECTURE
+INPUT SHAPE=(48, 48)
+--------------------------------------------------------------------------------------------------
+->MODEL
+   DISCRIMINATOR:
+      conv2d_block
+      conv2d_block_1
+      global_max_pooling2d
+      dense_layer
+      dense_layer_1
+   GENERATOR:
+      dense_layer_2
+      reshape
+      conv2d_transpose_block
+      conv2d_transpose_block_1
+      conv2d_block_2
+==================================================================================================
