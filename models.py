@@ -115,6 +115,9 @@ class Conv2D_block(tf.keras.Model):
             weights_init = tf.keras.initializers.HeNormal()
         elif activation == 'elu':
             self.Activation = tf.keras.activations.elu
+            weights_init = tf.keras.initializers.HeNormal()        
+        elif activation == 'gelu':
+            self.Activation = tf.keras.activations.gelu
             weights_init = tf.keras.initializers.HeNormal()
         elif activation == 'tanh':
             self.Activation = tf.keras.activations.tanh
@@ -183,6 +186,9 @@ class Conv2DTranspose_block(tf.keras.Model):
             weights_init = tf.keras.initializers.HeNormal()
         elif activation == 'elu':
             self.Activation = tf.keras.activations.elu
+            weights_init = tf.keras.initializers.HeNormal()        
+        elif activation == 'gelu':
+            self.Activation = tf.keras.activations.gelu
             weights_init = tf.keras.initializers.HeNormal()
         elif activation == 'tanh':
             self.Activation = tf.keras.activations.tanh
@@ -233,6 +239,9 @@ class Dense_layer(tf.keras.Model):
             weights_init = tf.keras.initializers.HeNormal()
         elif activation == 'elu':
             self.Activation = tf.keras.activations.elu
+            weights_init = tf.keras.initializers.HeNormal()        
+        elif activation == 'gelu':
+            self.Activation = tf.keras.activations.gelu
             weights_init = tf.keras.initializers.HeNormal()
         elif activation == 'tanh':
             self.Activation = tf.keras.activations.tanh

@@ -6,8 +6,8 @@ DATADIR=C:\Users\juan.ramos\CGGAN
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Analysis %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-TYPEANALYSIS=GENERATE   % SINGLETRAINING, SENSANALYSIS, TRAINGENERATE, GENERATE, DATAGEN, PLOTACTIVATIONS
-IMPORTMODEL=1
+TYPEANALYSIS=TRAINGENERATE   % SINGLETRAINING, SENSANALYSIS, TRAINGENERATE, GENERATE, DATAGEN, PLOTACTIVATIONS
+IMPORTMODEL=0
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Training parameters %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -16,13 +16,13 @@ TRAINSIZE=0.75
 LEARNINGRATE=0.0001
 L2REG=0.01
 L1REG=0.0
-L3REG=20
+L3REG=30
 DROPOUT=0.2
-EPOCHS=1
-EPOCHITER=1
-BATCHSIZE=64
+EPOCHS=40
+EPOCHITER=100
+BATCHSIZE=32
 NOISEDIM=1024
-ACTIVATION=LEAKYRELU  # NONE, RELU, ELU, GELU, LEAKYRELU, SWISH, SIGMOID, TANH
+ACTIVATION=GELU  # NONE, RELU, ELU, GELU, LEAKYRELU, SWISH, SIGMOID, TANH
 % When sensitivity analysis, indicate activations separated by commas --> ACTIVATION=RELU,SWISH
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Dataset Augmentation %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
